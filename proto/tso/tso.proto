@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package tso;
+
+option go_package = "go-mil/proto/tso";
+
+service TSO {
+  rpc Tick (TickRequest) returns (TickResponse);
+  rpc Tock (TockRequest) returns (TockResponse);
+}
+
+message TickRequest {}
+
+message TickResponse {
+  int64 timestamp = 1;
+}
+
+message TockRequest {}
+
+message TockResponse {
+  int64 timestamp = 1;
+}
+
