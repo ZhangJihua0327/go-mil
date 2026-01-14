@@ -1,0 +1,39 @@
+# Binaries and executables
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+
+# Go build / pkg / module cache (local artifacts)
+pkg/
+**/pkg/
+/vendor/
+
+# Dependency and vendoring helpers
+Godeps/
+*_vendor/
+
+# IDEs and editors
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Env & logs
+.env
+*.log
+
+# Generated files (optional - remove if you check generated code in VCS)
+*.pb.go
+*.gen.go
