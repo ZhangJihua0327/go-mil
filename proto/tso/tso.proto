@@ -7,6 +7,8 @@ option go_package = "go-mil/proto/tso";
 service TSO {
   rpc Tick (TickRequest) returns (TickResponse);
   rpc Tock (TockRequest) returns (TockResponse);
+  rpc BatchLock (BatchLockRequest) returns (BatchLockResponse);
+  rpc BatchUnlock (BatchUnlockRequest) returns (BatchUnlockResponse);
 }
 
 message TickRequest {}
@@ -21,3 +23,22 @@ message TockResponse {
   int64 timestamp = 1;
 }
 
+message BatchLockRequest {
+  repeated string keys = 1;
+  string owner_id = 2; // format: {txid}_{replica_name}
+  int64 ttl_ms = 3; // Optional TTL in milliseconds
+}
+
+message BatchLockResponse {
+  bool success = 1;
+  repeated string failed_keys = 2;
+}
+
+message BatchUnlockRequest {
+  repeated string keys = 1;
+  string owner_id = 2;
+}
+
+message BatchUnlockResponse {
+  bool success = 1;
+}
