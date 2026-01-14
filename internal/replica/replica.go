@@ -128,6 +128,52 @@ func (s *Server) GetTransaction(_ context.Context, req *pb.GetTransactionRequest
 	return &pb.GetTransactionResponse{Found: false}, nil
 }
 
+// ============================================================================
+// User Interface - Transaction operations
+// ============================================================================
+
+// Start begins a new transaction.
+// The user process interacts with a single replica for the duration of the transaction.
+func (s *Server) Start(_ context.Context, _ *pb.StartRequest) (*pb.StartResponse, error) {
+	// TODO: Implement Start logic
+	// 1. Assign new TxID
+	// 2. Determine start timestamp (Sts)
+	// 3. Initialize transaction state on this replica
+	return &pb.StartResponse{}, nil
+}
+
+// Read reads a value associated with a key, visible at the transaction's start timestamp.
+func (s *Server) Read(_ context.Context, _ *pb.ReadRequest) (*pb.ReadResponse, error) {
+	// TODO: Implement Read logic
+	// 1. Check if key is in local write buffer of the transaction
+	// 2. If not, read from storage using Sts
+	return &pb.ReadResponse{}, nil
+}
+
+// Write writes a value to the transaction's local buffer.
+func (s *Server) Write(_ context.Context, _ *pb.WriteRequest) (*pb.WriteResponse, error) {
+	// TODO: Implement Write logic
+	// 1. Buffer the write locally for the transaction
+	return &pb.WriteResponse{}, nil
+}
+
+// Commit attempts to commit the transaction.
+func (s *Server) Commit(_ context.Context, _ *pb.CommitRequest) (*pb.CommitResponse, error) {
+	// TODO: Implement Commit logic
+	// 1. Perform conflict detection if necessary
+	// 2. Assign commit timestamp (Cts) via TSO
+	// 3. Apply writes to storage
+	// 4. Replicate via Gossip (BatchPut)
+	return &pb.CommitResponse{}, nil
+}
+
+// Abort checks and aborts the transaction.
+func (s *Server) Abort(_ context.Context, _ *pb.AbortRequest) (*pb.AbortResponse, error) {
+	// TODO: Implement Abort logic
+	// 1. Clear local transaction state/buffer
+	return &pb.AbortResponse{}, nil
+}
+
 func (s *Server) applyToStore(req *pb.BatchPutRequest) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -195,4 +241,135 @@ func (s *Server) sendGossip(address string, payload []byte) {
 		// Log error but don't fail hard
 		// fmt.Printf("Failed to gossip to %s: %v\n", address, err)
 	}
+}
+
+// ============================================================================
+// Client Interface
+// ============================================================================
+
+// Client defines the interface for users to interact with the replica system.
+// It abstracts the underlying coordination mechanism (centralized vs decentralized).
+type Client interface {
+	Start(ctx context.Context) (string, uint64, error)
+	Read(ctx context.Context, txID, key string) (int64, bool, error)
+	Write(ctx context.Context, txID, key string, value int64) error
+	Commit(ctx context.Context, txID string) (uint64, error)
+	Abort(ctx context.Context, txID string) error
+}
+
+// ============================================================================
+// Centralized Client Implementation (Remote/gRPC)
+// ============================================================================
+
+// CentralizedClient connects to a specific replica via gRPC.
+// That replica acts as the transaction coordinator.
+type CentralizedClient struct {
+	client pb.ReplicaServiceClient
+}
+
+// NewCentralizedClient creates a new CentralizedClient.
+func NewCentralizedClient(conn grpc.ClientConnInterface) *CentralizedClient {
+	return &CentralizedClient{
+		client: pb.NewReplicaServiceClient(conn),
+	}
+}
+
+func (c *CentralizedClient) Start(ctx context.Context) (string, uint64, error) {
+	resp, err := c.client.Start(ctx, &pb.StartRequest{})
+	if err != nil {
+		return "", 0, err
+	}
+	return resp.TxId, resp.Sts, nil
+}
+
+func (c *CentralizedClient) Read(ctx context.Context, txID, key string) (int64, bool, error) {
+	resp, err := c.client.Read(ctx, &pb.ReadRequest{
+		TxId: txID,
+		Key:  key,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return resp.Value, resp.Found, nil
+}
+
+func (c *CentralizedClient) Write(ctx context.Context, txID, key string, value int64) error {
+	resp, err := c.client.Write(ctx, &pb.WriteRequest{
+		TxId:  txID,
+		Key:   key,
+		Value: value,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("write failed")
+	}
+	return nil
+}
+
+func (c *CentralizedClient) Commit(ctx context.Context, txID string) (uint64, error) {
+	resp, err := c.client.Commit(ctx, &pb.CommitRequest{
+		TxId: txID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !resp.Success {
+		return resp.Cts, fmt.Errorf("commit failed")
+	}
+	return resp.Cts, nil
+}
+
+func (c *CentralizedClient) Abort(ctx context.Context, txID string) error {
+	resp, err := c.client.Abort(ctx, &pb.AbortRequest{
+		TxId: txID,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("abort failed")
+	}
+	return nil
+}
+
+// ============================================================================
+// Decentralized Client Implementation (Decentralized)
+// ============================================================================
+
+// DecentralizedClient acts as the transaction coordinator itself.
+// It communicates with TSO and multiple replicas directly.
+type DecentralizedClient struct {
+	// TODO: Add connections to TSO and Replicas
+}
+
+// NewDecentralizedClient creates a new DecentralizedClient.
+func NewDecentralizedClient() *DecentralizedClient {
+	return &DecentralizedClient{}
+}
+
+func (c *DecentralizedClient) Start(_ context.Context) (string, uint64, error) {
+	// TODO: Implement client-side start logic (fetch TSO)
+	return "", 0, nil
+}
+
+func (c *DecentralizedClient) Read(_ context.Context, _, _ string) (int64, bool, error) {
+	// TODO: Implement client-side read logic (route to correct replica)
+	return 0, false, nil
+}
+
+func (c *DecentralizedClient) Write(_ context.Context, _, _ string, _ int64) error {
+	// TODO: Implement client-side write logic (buffer locally)
+	return nil
+}
+
+func (c *DecentralizedClient) Commit(_ context.Context, _ string) (uint64, error) {
+	// TODO: Implement client-side commit logic (2PC or similar)
+	return 0, nil
+}
+
+func (c *DecentralizedClient) Abort(_ context.Context, _ string) error {
+	// TODO: Implement client-side abort logic
+	return nil
 }

@@ -104,12 +104,75 @@ type AbortOperation struct {
 // Transaction represents a transaction in the system.
 // Details will be defined later.
 type Transaction struct {
-	TxId string
-	Cts  uint64
+	TxId       string
+	Sts        uint64
+	Cts        uint64
+	Deps       *Deps
+	Operations []BaseOperation
 }
 
 // Deps represents the set of transactions visible to the current node.
 type Deps struct {
 	MinDep uint64              // All transactions with timestamp <= MinDep are received
 	DepSet map[uint64]struct{} // Set of timestamps > MinDep that are received
+}
+
+// NewDeps returns a new initialized Deps.
+func NewDeps() *Deps {
+	return &Deps{
+		MinDep: 0,
+		DepSet: make(map[uint64]struct{}),
+	}
+}
+
+// Add inserts a timestamp into the dependencies.
+// It advances MinDep if the new timestamp fills a gap in the sequence.
+func (d *Deps) Add(ts uint64) {
+	if ts <= d.MinDep {
+		return
+	}
+
+	if d.DepSet == nil {
+		d.DepSet = make(map[uint64]struct{})
+	}
+
+	// Add to set first
+	d.DepSet[ts] = struct{}{}
+
+	// Try to advance MinDep closing contiguous gaps
+	for {
+		next := d.MinDep + 1
+		if _, exists := d.DepSet[next]; exists {
+			delete(d.DepSet, next)
+			d.MinDep = next
+		} else {
+			break
+		}
+	}
+}
+
+// Merge combines another Deps into this one.
+// It assumes that if a timestamp is in 'other', it is now visible to 'd'.
+func (d *Deps) Merge(other *Deps) {
+	if other == nil {
+		return
+	}
+
+	// 1. Adopt the higher MinDep
+	if other.MinDep > d.MinDep {
+		d.MinDep = other.MinDep
+		// Clean up redundant entries in DepSet that are now covered by MinDep
+		if d.DepSet != nil {
+			for ts := range d.DepSet {
+				if ts <= d.MinDep {
+					delete(d.DepSet, ts)
+				}
+			}
+		}
+	}
+
+	// 2. Add individual timestamps from other
+	for ts := range other.DepSet {
+		d.Add(ts)
+	}
 }

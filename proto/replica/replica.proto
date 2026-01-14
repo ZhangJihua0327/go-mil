@@ -9,6 +9,13 @@ service ReplicaService {
     rpc BatchPut(BatchPutRequest) returns (BatchPutResponse) {}
     rpc Gossip(GossipRequest) returns (GossipResponse) {}
     rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {}
+
+    // User-facing transaction operations
+    rpc Start(StartRequest) returns (StartResponse) {}
+    rpc Read(ReadRequest) returns (ReadResponse) {}
+    rpc Write(WriteRequest) returns (WriteResponse) {}
+    rpc Commit(CommitRequest) returns (CommitResponse) {}
+    rpc Abort(AbortRequest) returns (AbortResponse) {}
 }
 
 message GetRequest {
@@ -47,4 +54,50 @@ message GetTransactionResponse {
     string tx_id = 1;
     uint64 cts = 2;
     bool found = 3;
+}
+
+message StartRequest {
+    // Optional: Isolation level, etc.
+}
+
+message StartResponse {
+    string tx_id = 1;
+    uint64 sts = 2;
+}
+
+message ReadRequest {
+    string tx_id = 1;
+    string key = 2;
+}
+
+message ReadResponse {
+    int64 value = 1;
+    bool found = 2;
+}
+
+message WriteRequest {
+    string tx_id = 1;
+    string key = 2;
+    int64 value = 3;
+}
+
+message WriteResponse {
+    bool success = 1;
+}
+
+message CommitRequest {
+    string tx_id = 1;
+}
+
+message CommitResponse {
+    bool success = 1;
+    uint64 cts = 2;
+}
+
+message AbortRequest {
+    string tx_id = 1;
+}
+
+message AbortResponse {
+    bool success = 1;
 }
