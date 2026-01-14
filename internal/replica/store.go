@@ -31,6 +31,8 @@ type Store struct {
 
 	historyMu sync.Mutex
 	history   *TxNode
+
+	deps *model.Deps
 }
 
 // NewStore creates a new Store instance
