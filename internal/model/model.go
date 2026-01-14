@@ -7,6 +7,17 @@ import "strings"
 // ============================================================================
 
 // IsolationLevel represents the isolation level of a transaction
+// Lattice structure (Strength order):
+//
+//	  SER
+//	   |
+//	   SI
+//	  /  \
+//	PC    PSI
+//	  \  /
+//	   CC
+//	   |
+//	   RA
 type IsolationLevel int
 
 const (
@@ -18,11 +29,47 @@ const (
 	PC
 	// PSI - Parallel Snapshot Isolation: Allows parallel snapshots with conflict detection
 	PSI
-	// SI - Snapshot Isolation: Provides consistent snapshot view
+	// SI - Snapshot Isolation: Provides consistent snapshot view (LUB of PC and PSI)
 	SI
-	// SER - Serviceability: Strongest isolation, equivalent to serial execution
+	// SER - Serializability: Strongest isolation, equivalent to serial execution
 	SER
 )
+
+// Satisfies returns true if the receiver isolation level is stronger than or equal to the required level.
+func (il IsolationLevel) Satisfies(required IsolationLevel) bool {
+	if il == required {
+		return true
+	}
+	switch il {
+	case SER:
+		return true
+	case SI:
+		return required != SER
+	case PC:
+		return required == CC || required == RA
+	case PSI:
+		return required == CC || required == RA
+	case CC:
+		return required == RA
+	case RA:
+		return false
+	default:
+		return false
+	}
+}
+
+// LeastUpperBound returns the weakest isolation level that satisfies both il and other.
+func (il IsolationLevel) LeastUpperBound(other IsolationLevel) IsolationLevel {
+	if il.Satisfies(other) {
+		return il
+	}
+	if other.Satisfies(il) {
+		return other
+	}
+	// If neither satisfies the other, they must be PC and PSI (incomparable).
+	// Their LUB is SI.
+	return SI
+}
 
 func (il IsolationLevel) String() string {
 	switch il {
