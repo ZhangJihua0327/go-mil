@@ -107,3 +107,9 @@ type Transaction struct {
 	TxId string
 	Cts  uint64
 }
+
+// Deps represents the set of transactions visible to the current node.
+type Deps struct {
+	MinDep uint64              // All transactions with timestamp <= MinDep are received
+	DepSet map[uint64]struct{} // Set of timestamps > MinDep that are received
+}
