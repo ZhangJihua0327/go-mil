@@ -104,4 +104,6 @@ type AbortOperation struct {
 // Transaction represents a transaction in the system.
 // Details will be defined later.
 type Transaction struct {
+	TxId string
+	Cts  uint64
 }

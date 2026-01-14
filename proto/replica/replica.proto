@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package replica;
+
+option go_package = "go-mil/proto/replica";
+
+service ReplicaService {
+    rpc Get(GetRequest) returns (GetResponse) {}
+    rpc BatchPut(BatchPutRequest) returns (BatchPutResponse) {}
+    rpc Gossip(GossipRequest) returns (GossipResponse) {}
+}
+
+message GetRequest {
+    string key = 1;
+    uint64 sts = 2;
+}
+
+message GetResponse {
+    int64 value = 1;
+    bool found = 2;
+}
+
+message BatchPutRequest {
+    map<string, int64> kvs = 1;
+    uint64 cts = 2;
+}
+
+message BatchPutResponse {
+    bool success = 1;
+}
+
+message GossipRequest {
+    string from = 1;
+    bytes payload = 2;
+}
+
+message GossipResponse {
+    bool success = 1;
+}
+

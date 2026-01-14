@@ -1,6 +1,9 @@
 package replica
 
-import "sync"
+import (
+	"go-mil/internal/model"
+	"sync"
+)
 
 // ValNode represents a version in the MVCC chain
 type ValNode struct {
@@ -15,10 +18,19 @@ type headLock struct {
 	head *ValNode
 }
 
+// TxNode represents a node in the transaction history
+type TxNode struct {
+	Tx   *model.Transaction
+	Next *TxNode
+}
+
 // Store represents the Key-Value map with MVCC support
 type Store struct {
 	mu   sync.RWMutex
 	data map[string]*headLock
+
+	historyMu sync.Mutex
+	history   *TxNode
 }
 
 // NewStore creates a new Store instance
@@ -106,4 +118,72 @@ func (s *Store) Get(key string, sts uint64) *ValNode {
 		current = current.Next
 	}
 	return nil
+}
+
+// GC deletes all value nodes whose Cts <= ts, except head nodes.
+func (s *Store) GC(ts uint64) {
+	s.mu.RLock()
+	locks := make([]*headLock, 0, len(s.data))
+	for _, hl := range s.data {
+		locks = append(locks, hl)
+	}
+	s.mu.RUnlock()
+
+	for _, hl := range locks {
+		hl.mu.Lock()
+		if hl.head != nil {
+			curr := hl.head
+			// Iterate to find the cut-off point
+			// Since list is sorted descending by Cts, once we find a node <= ts,
+			// all following nodes are also <= ts.
+			// We never delete head, so we start checking from head.Next.
+			for curr.Next != nil {
+				if curr.Next.Cts <= ts {
+					curr.Next = nil
+					break
+				}
+				curr = curr.Next
+			}
+		}
+		hl.mu.Unlock()
+	}
+
+	// History GC
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+
+	if s.history != nil {
+		curr := s.history
+		// Apply same GC logic as value nodes: preserve head (or first valid), cut off rest
+		for curr.Next != nil {
+			if curr.Next.Tx.Cts <= ts {
+				curr.Next = nil
+				break
+			}
+			curr = curr.Next
+		}
+	}
+}
+
+// AddTx adds a transaction to the history, maintaining order by Cts descending
+func (s *Store) AddTx(tx *model.Transaction) {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+
+	newNode := &TxNode{
+		Tx: tx,
+	}
+
+	if s.history == nil || tx.Cts > s.history.Tx.Cts {
+		newNode.Next = s.history
+		s.history = newNode
+		return
+	}
+
+	curr := s.history
+	for curr.Next != nil && curr.Next.Tx.Cts > tx.Cts {
+		curr = curr.Next
+	}
+	newNode.Next = curr.Next
+	curr.Next = newNode
 }
