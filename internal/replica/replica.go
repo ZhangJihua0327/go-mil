@@ -108,6 +108,26 @@ func (s *Server) Gossip(_ context.Context, req *pb.GossipRequest) (*pb.GossipRes
 	return &pb.GossipResponse{Success: true}, nil
 }
 
+// GetTransaction handles request to retrieve a transaction by its commit timestamp
+func (s *Server) GetTransaction(_ context.Context, req *pb.GetTransactionRequest) (*pb.GetTransactionResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// TODO: Proper routing again.
+	// For now, scan all replicas. The first one that finds it returns it.
+	for _, r := range s.replicas {
+		if tx := r.Store.GetTx(req.Cts); tx != nil {
+			return &pb.GetTransactionResponse{
+				TxId:  tx.TxId,
+				Cts:   tx.Cts,
+				Found: true,
+			}, nil
+		}
+	}
+
+	return &pb.GetTransactionResponse{Found: false}, nil
+}
+
 func (s *Server) applyToStore(req *pb.BatchPutRequest) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

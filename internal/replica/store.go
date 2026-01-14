@@ -187,3 +187,21 @@ func (s *Store) AddTx(tx *model.Transaction) {
 	newNode.Next = curr.Next
 	curr.Next = newNode
 }
+
+// GetTx returns the transaction with the given cts
+func (s *Store) GetTx(cts uint64) *model.Transaction {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+
+	curr := s.history
+	for curr != nil {
+		if curr.Tx.Cts == cts {
+			return curr.Tx
+		}
+		if curr.Tx.Cts < cts {
+			return nil
+		}
+		curr = curr.Next
+	}
+	return nil
+}

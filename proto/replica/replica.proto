@@ -8,6 +8,7 @@ service ReplicaService {
     rpc Get(GetRequest) returns (GetResponse) {}
     rpc BatchPut(BatchPutRequest) returns (BatchPutResponse) {}
     rpc Gossip(GossipRequest) returns (GossipResponse) {}
+    rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {}
 }
 
 message GetRequest {
@@ -38,3 +39,12 @@ message GossipResponse {
     bool success = 1;
 }
 
+message GetTransactionRequest {
+    uint64 cts = 1;
+}
+
+message GetTransactionResponse {
+    string tx_id = 1;
+    uint64 cts = 2;
+    bool found = 3;
+}
