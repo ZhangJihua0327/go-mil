@@ -6,47 +6,7 @@ import (
 	pb "go-mil/proto/replica"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
 )
-
-// GrpcPeerClient implements PeerClient using gRPC
-type GrpcPeerClient struct{}
-
-// NewGrpcPeerClient creates a new GrpcPeerClient
-func NewGrpcPeerClient() *GrpcPeerClient {
-	return &GrpcPeerClient{}
-}
-
-func (c *GrpcPeerClient) Gossip(ctx context.Context, addr string, req *pb.BatchPutRequest) (*pb.GossipResponse, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to peer %s: %v", addr, err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	client := pb.NewReplicaServiceClient(conn)
-	payload, err := proto.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %v", err)
-	}
-
-	return client.Gossip(ctx, &pb.GossipRequest{
-		From:    "myself", // TODO: Should be real address
-		Payload: payload,
-	})
-}
-
-func (c *GrpcPeerClient) GetTransaction(ctx context.Context, addr string, cts uint64) (*pb.GetTransactionResponse, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to peer %s: %v", addr, err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	client := pb.NewReplicaServiceClient(conn)
-	return client.GetTransaction(ctx, &pb.GetTransactionRequest{Cts: cts})
-}
 
 // Server implements the ReplicaService gRPC server
 type Server struct {
@@ -61,19 +21,6 @@ func NewServer(r *Replica, client Client) *Server {
 		replica: r,
 		client:  client,
 	}
-}
-
-// Gossip handles incoming gossip messages
-func (s *Server) Gossip(_ context.Context, req *pb.GossipRequest) (*pb.GossipResponse, error) {
-	// TODO: Add relay logic if we want multi-hop
-
-	var putReq pb.BatchPutRequest
-	if err := proto.Unmarshal(req.Payload, &putReq); err != nil {
-		return &pb.GossipResponse{Success: false}, fmt.Errorf("failed to unmarshal payload: %v", err)
-	}
-
-	s.replica.applyToStore(&putReq)
-	return &pb.GossipResponse{Success: true}, nil
 }
 
 // GetTransaction handles request to retrieve a transaction by its commit timestamp
@@ -112,9 +59,6 @@ func (s *Server) Get(_ context.Context, req *pb.GetRequest) (*pb.GetResponse, er
 func (s *Server) BatchPut(_ context.Context, req *pb.BatchPutRequest) (*pb.BatchPutResponse, error) {
 	// Apply locally
 	s.replica.applyToStore(req)
-
-	// Gossip asynchronously
-	go s.replica.gossip(req)
 
 	return &pb.BatchPutResponse{Success: true}, nil
 }
@@ -186,4 +130,127 @@ func (s *Server) Abort(ctx context.Context, req *pb.AbortRequest) (*pb.AbortResp
 		return &pb.AbortResponse{Success: false}, err
 	}
 	return &pb.AbortResponse{Success: true}, nil
+}
+
+// ============================================================================
+// Client Interface & Implementations
+// ============================================================================
+
+// Client defines the interface for users to interact with the replica system.
+// It abstracts the underlying coordination mechanism (centralized vs decentralized).
+type Client interface {
+	Start(ctx context.Context) (string, uint64, error)
+	Read(ctx context.Context, txID, key string) (int64, bool, error)
+	Write(ctx context.Context, txID, key string, value int64) error
+	Commit(ctx context.Context, txID string) (uint64, error)
+	Abort(ctx context.Context, txID string) error
+}
+
+// CentralizedClient connects to a specific replica via gRPC.
+// That replica acts as the transaction coordinator.
+type CentralizedClient struct {
+	client pb.ReplicaServiceClient
+}
+
+// NewCentralizedClient creates a new CentralizedClient.
+func NewCentralizedClient(conn grpc.ClientConnInterface) *CentralizedClient {
+	return &CentralizedClient{
+		client: pb.NewReplicaServiceClient(conn),
+	}
+}
+
+func (c *CentralizedClient) Start(ctx context.Context) (string, uint64, error) {
+	resp, err := c.client.Start(ctx, &pb.StartRequest{})
+	if err != nil {
+		return "", 0, err
+	}
+	return resp.TxId, resp.Sts, nil
+}
+
+func (c *CentralizedClient) Read(ctx context.Context, txID, key string) (int64, bool, error) {
+	resp, err := c.client.Read(ctx, &pb.ReadRequest{
+		TxId: txID,
+		Key:  key,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return resp.Value, resp.Found, nil
+}
+
+func (c *CentralizedClient) Write(ctx context.Context, txID, key string, value int64) error {
+	resp, err := c.client.Write(ctx, &pb.WriteRequest{
+		TxId:  txID,
+		Key:   key,
+		Value: value,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("write failed")
+	}
+	return nil
+}
+
+func (c *CentralizedClient) Commit(ctx context.Context, txID string) (uint64, error) {
+	resp, err := c.client.Commit(ctx, &pb.CommitRequest{
+		TxId: txID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !resp.Success {
+		return resp.Cts, fmt.Errorf("commit failed")
+	}
+	return resp.Cts, nil
+}
+
+func (c *CentralizedClient) Abort(ctx context.Context, txID string) error {
+	resp, err := c.client.Abort(ctx, &pb.AbortRequest{
+		TxId: txID,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("abort failed")
+	}
+	return nil
+}
+
+// DecentralizedClient acts as the transaction coordinator itself.
+// It communicates with TSO and multiple replicas directly.
+type DecentralizedClient struct {
+	// TODO: Add connections to TSO and Replicas
+}
+
+// NewDecentralizedClient creates a new DecentralizedClient.
+func NewDecentralizedClient() *DecentralizedClient {
+	return &DecentralizedClient{}
+}
+
+func (c *DecentralizedClient) Start(_ context.Context) (string, uint64, error) {
+	// TODO: Implement client-side start logic (fetch TSO)
+	return "", 0, nil
+}
+
+func (c *DecentralizedClient) Read(_ context.Context, _, _ string) (int64, bool, error) {
+	// TODO: Implement client-side read logic (route to correct replica)
+	return 0, false, nil
+}
+
+func (c *DecentralizedClient) Write(_ context.Context, _, _ string, _ int64) error {
+	// TODO: Implement client-side write logic (buffer locally)
+	return nil
+}
+
+func (c *DecentralizedClient) Commit(_ context.Context, _ string) (uint64, error) {
+	// TODO: Implement client-side commit logic (2PC or similar)
+	return 0, nil
+}
+
+func (c *DecentralizedClient) Abort(_ context.Context, _ string) error {
+	// TODO: Implement client-side abort logic
+	return nil
 }

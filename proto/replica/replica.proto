@@ -7,7 +7,6 @@ option go_package = "go-mil/proto/replica";
 service ReplicaService {
     rpc Get(GetRequest) returns (GetResponse) {}
     rpc BatchPut(BatchPutRequest) returns (BatchPutResponse) {}
-    rpc Gossip(GossipRequest) returns (GossipResponse) {}
     rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {}
 
     // User-facing transaction operations
@@ -37,14 +36,6 @@ message BatchPutResponse {
     bool success = 1;
 }
 
-message GossipRequest {
-    string from = 1;
-    bytes payload = 2;
-}
-
-message GossipResponse {
-    bool success = 1;
-}
 
 message GetTransactionRequest {
     uint64 cts = 1;
