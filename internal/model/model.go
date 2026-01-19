@@ -160,9 +160,6 @@ type Operation interface {
 
 // BaseOperation represents common fields for all operations.
 type BaseOperation struct {
-	TxID     string   // Transaction ID (string format)
-	Sts      uint64   // Start timestamp from parent transaction
-	Response chan any // Channel for async response
 }
 
 // GetBase returns the base operation, implementing part of the Operation interface.
@@ -173,7 +170,6 @@ func (b *BaseOperation) GetBase() *BaseOperation {
 // StartOperation represents a start operation
 type StartOperation struct {
 	BaseOperation
-	IsolationLevel IsolationLevel
 }
 
 // OpType returns OpStart
@@ -225,16 +221,37 @@ func (o *AbortOperation) OpType() OperationType { return OpAbort }
 
 // Transaction represents a transaction in the system.
 type Transaction struct {
-	TxId       string
-	Sts        uint64
-	Cts        uint64
-	Deps       *Deps
-	Operations []Operation
+	TxId           string
+	Sts            uint64
+	Cts            uint64
+	IsolationLevel IsolationLevel
+	Deps           *Deps
+	Operations     []Operation
 }
 
 // AddOperation adds an operation to the transaction.
 func (tx *Transaction) AddOperation(op Operation) {
 	tx.Operations = append(tx.Operations, op)
+}
+
+func (tx *Transaction) WRSet() (map[string]int, map[string]int) {
+	wSet := make(map[string]int)
+	rSet := make(map[string]int)
+	for _, op := range tx.Operations {
+		switch o := op.(type) {
+		case *WriteOperation:
+			wSet[o.Key] = o.Value
+			break
+		case *ReadOperation:
+			// if key in wset, skip
+			if _, exists := wSet[o.Key]; exists {
+				continue
+			}
+			rSet[o.Key] = o.ReadResult
+		}
+	}
+
+	return wSet, rSet
 }
 
 // Deps represents the set of transactions visible to the current node.
@@ -249,6 +266,20 @@ func NewDeps() *Deps {
 		MinDep: 0,
 		DepSet: make(map[uint64]struct{}),
 	}
+}
+
+func (d *Deps) MaxDeps() uint64 {
+	if d.DepSet == nil || len(d.DepSet) == 0 {
+		return d.MinDep
+	}
+	// the maxVal in depset
+	var maxVal uint64 = d.MinDep
+	for ts := range d.DepSet {
+		if ts > maxVal {
+			maxVal = ts
+		}
+	}
+	return maxVal
 }
 
 // Add inserts a timestamp into the dependencies.
@@ -277,7 +308,7 @@ func (d *Deps) Add(ts uint64) {
 	}
 }
 
-func (d *Deps) Received(ts uint64) bool {
+func (d *Deps) IsReceived(ts uint64) bool {
 	if ts <= d.MinDep {
 		return true
 	}
@@ -311,5 +342,19 @@ func (d *Deps) Merge(other *Deps) {
 	// 2. Add individual timestamps from other
 	for ts := range other.DepSet {
 		d.Add(ts)
+	}
+}
+
+func (d *Deps) Clone() *Deps {
+	if d == nil {
+		return nil
+	}
+	newDepSet := make(map[uint64]struct{}, len(d.DepSet))
+	for k, v := range d.DepSet {
+		newDepSet[k] = v
+	}
+	return &Deps{
+		MinDep: d.MinDep,
+		DepSet: newDepSet,
 	}
 }

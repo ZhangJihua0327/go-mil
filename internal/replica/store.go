@@ -224,7 +224,7 @@ func (s *Store) AppendTx(tx *model.Transaction) {
 func (s *Store) GetTx(cts uint64) *model.Transaction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if !s.deps.Received(cts) {
+	if !s.deps.IsReceived(cts) {
 		return nil
 	}
 	curr := s.history

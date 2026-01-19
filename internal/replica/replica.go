@@ -126,7 +126,7 @@ func (r *Replica) EnsureCausal(ts uint64) error {
 // EnsureTotal ensures all transactions with cts <= ts are received.
 func (r *Replica) EnsureTotal(ts uint64) error {
 	for cts := uint64(r.Store.deps.MinDep); cts <= ts; cts++ {
-		if r.Store.deps.Received(cts) {
+		if r.Store.deps.IsReceived(cts) {
 			continue
 		}
 		tx := r.Store.pendingTxs[cts]

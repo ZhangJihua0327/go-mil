@@ -21,14 +21,12 @@ type TxnClient interface {
 
 // CentralizedClient is a placeholder for a central-coordinator TxnClient implementation.
 type CentralizedClient struct {
-	replica  *Replica
-	txId     string
-	sts      uint64
-	cts      uint64
-	buffer   map[string]int
-	isoLevel model.IsolationLevel
-	active   bool
-	mu       sync.Mutex
+	replica *Replica
+	txId    string
+	tx      model.Transaction
+	buffer  map[string]int
+	active  bool
+	mu      sync.Mutex
 }
 
 func NewCentralizedClient(r *Replica) *CentralizedClient {
@@ -45,20 +43,21 @@ func (c *CentralizedClient) Start(ctx context.Context, isolationLevel string) (s
 	if c.active {
 		return "", 0, fmt.Errorf("transaction already active")
 	}
-	c.isoLevel = model.ParseIsolationLevel(isolationLevel)
-	sts, err := c.replica.Tick(ctx)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to get start timestamp: %v", err)
+
+	sts := c.replica.Store.deps.MaxDeps()
+	c.tx = model.Transaction{
+		TxId:           fmt.Sprintf("tx-%d-%s", sts, c.replica.ID),
+		Sts:            sts,
+		Deps:           c.replica.Store.deps.Clone(),
+		IsolationLevel: model.ParseIsolationLevel(isolationLevel),
 	}
-	c.sts = sts
-	c.txId = fmt.Sprintf("tx-%d-%s", sts, c.replica.ID)
 	c.buffer = make(map[string]int)
 	c.active = true
-
-	return c.txId, c.sts, nil
+	c.tx.AddOperation(&model.StartOperation{})
+	return c.txId, sts, nil
 }
 
-func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, error) {
+func (c *CentralizedClient) Read(ctx context.Context, key string) (int, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -66,18 +65,30 @@ func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, 
 		return 0, false, fmt.Errorf("no active transaction")
 	}
 
+	var val int
+	var succeed bool
 	// 1. Read from buffer first
-	if val, exists := c.buffer[key]; exists {
-		return int64(val), true, nil
-	}
+	if value, exists := c.buffer[key]; exists {
+		val = value
+		succeed = true
+	} else {
+		// 2. Read from snapshot (Store)
+		node := c.replica.Store.Get(key, c.tx.Sts)
 
-	// 2. Read from snapshot (Store)
-	node := c.replica.Store.Get(key, c.sts)
-	if node != nil {
-		return int64(node.Value), true, nil
+		if node != nil {
+			val = node.Value
+			succeed = true
+		} else {
+			val = 0
+			succeed = false
+		}
 	}
+	c.tx.AddOperation(&model.ReadOperation{
+		Key:        key,
+		ReadResult: val,
+	})
 
-	return 0, false, nil
+	return val, succeed, nil
 }
 
 func (c *CentralizedClient) Write(ctx context.Context, key string, value int64) error {
@@ -90,6 +101,11 @@ func (c *CentralizedClient) Write(ctx context.Context, key string, value int64) 
 
 	// Write to buffer
 	c.buffer[key] = int(value)
+	c.tx.AddOperation(&model.WriteOperation{
+		Key:   key,
+		Value: int(value),
+	})
+
 	return nil
 }
 
@@ -106,20 +122,17 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to get commit timestamp: %v", err)
 	}
-	c.cts = cts
+	c.tx.Cts = cts
 
 	// 2. Atomic write to Store
-	c.replica.Store.BatchPut(c.buffer, c.cts)
-
+	c.replica.Store.BatchPut(c.buffer, cts)
 	// 3. add to history
-	c.replica.Store.AppendTx(&model.Transaction{
-		TxId: c.txId,
-		Sts:  c.sts,
-		Cts:  c.cts,
-	})
-
+	c.replica.Store.AppendTx(&c.tx)
+	c.replica.SendTxToPeers(&c.tx)
 	c.active = false
-	return c.cts, nil
+	c.tx = model.Transaction{}
+	c.buffer = nil
+	return c.tx.Cts, nil
 }
 
 func (c *CentralizedClient) Abort(ctx context.Context) error {
@@ -129,9 +142,9 @@ func (c *CentralizedClient) Abort(ctx context.Context) error {
 	if !c.active {
 		return fmt.Errorf("no active transaction")
 	}
-
-	c.buffer = nil
 	c.active = false
+	c.tx = model.Transaction{}
+	c.buffer = nil
 	return nil
 }
 
