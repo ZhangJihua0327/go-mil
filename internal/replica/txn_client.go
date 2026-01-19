@@ -139,7 +139,7 @@ func (c *CentralizedClient) Abort(ctx context.Context) error {
 type DecentralizedClient struct {
 }
 
-func NewDecentralizedClient() *DecentralizedClient { return &DecentralizedClient{} }
+func NewDecentralizedClient(r *Replica) *DecentralizedClient { return &DecentralizedClient{} }
 
 func (c *DecentralizedClient) Start(ctx context.Context, isolationLevel string) (string, uint64, error) {
 	return "", 0, fmt.Errorf("decentralized start not implemented (iso=%s)", isolationLevel)

@@ -27,10 +27,11 @@ type TSOConfig struct {
 
 // ReplicaConfig holds the configuration for Replica nodes.
 type ReplicaConfig struct {
-	ReplicaID string
-	Port      string
-	TSOAddr   string
-	Peers     []Peer
+	ReplicaID   string
+	Port        string
+	TSOAddr     string
+	CentralMode bool
+	Peers       []Peer
 }
 
 // GetNodeType returns the node type from NODE_TYPE environment variable.
@@ -52,10 +53,11 @@ func LoadTSOConfig() *TSOConfig {
 // LoadReplicaConfig loads Replica configuration from environment variables.
 func LoadReplicaConfig() *ReplicaConfig {
 	config := &ReplicaConfig{
-		ReplicaID: os.Getenv("REPLICA_ID"),
-		Port:      getEnv("PORT", "50051"),
-		TSOAddr:   os.Getenv("TSO_ADDR"),
-		Peers:     loadPeers(),
+		ReplicaID:   os.Getenv("REPLICA_ID"),
+		Port:        getEnv("PORT", "50051"),
+		TSOAddr:     os.Getenv("TSO_ADDR"),
+		Peers:       loadPeers(),
+		CentralMode: getEnv("CENTRAL_MODE", "false") == "true",
 	}
 	return config
 }

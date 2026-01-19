@@ -19,9 +19,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create replica: %v", err)
 	}
-	txn := replica.NewLocalClient(r)
 
-	runConsole(txn)
+	var client replica.TxnClient
+	if cfg.CentralMode {
+		client = replica.NewCentralizedClient(r)
+	} else {
+		client = replica.NewDecentralizedClient(r)
+	}
+
+	runConsole(client)
 }
 
 func runConsole(txn replica.TxnClient) {
