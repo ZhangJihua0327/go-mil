@@ -2,20 +2,18 @@ package main
 
 import (
 	"fmt"
+	"go-mil/internal/config"
 	"go-mil/internal/tso"
 	pb "go-mil/proto/tso"
 	"log"
 	"net"
-	"os"
 
 	"google.golang.org/grpc"
 )
 
 func main() {
-	port := os.Getenv("TSO_PORT")
-	if port == "" {
-		port = "50051"
-	}
+	cfg := config.LoadTSOConfig()
+	port := cfg.Port
 
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
