@@ -110,60 +110,130 @@ func ParseIsolationLevel(s string) IsolationLevel {
 	}
 }
 
-// BaseOperation Operation represents an operation in the system.
-// Details will be defined later.
+// ============================================================================
+// Operation - Transaction operations
+// ============================================================================
+
+// OperationType represents the type of an operation
+type OperationType int
+
+const (
+	// OpStart represents a start operation
+	OpStart OperationType = iota
+	// OpRead represents a read operation
+	OpRead
+	// OpWrite represents a write operation
+	OpWrite
+	// OpPrepare represents a prepare operation
+	OpPrepare
+	// OpCommit represents a commit operation
+	OpCommit
+	// OpAbort represents an abort operation
+	OpAbort
+)
+
+func (ot OperationType) String() string {
+	switch ot {
+	case OpStart:
+		return "START"
+	case OpRead:
+		return "READ"
+	case OpWrite:
+		return "WRITE"
+	case OpPrepare:
+		return "PREPARE"
+	case OpCommit:
+		return "COMMIT"
+	case OpAbort:
+		return "ABORT"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Operation defines the interface for all transaction operations.
+// This allows for polymorphism and easy type-checking (similar to Java's instanceof).
+type Operation interface {
+	OpType() OperationType
+	GetBase() *BaseOperation
+}
+
+// BaseOperation represents common fields for all operations.
 type BaseOperation struct {
 	TxID     string   // Transaction ID (string format)
 	Sts      uint64   // Start timestamp from parent transaction
 	Response chan any // Channel for async response
 }
 
+// GetBase returns the base operation, implementing part of the Operation interface.
+func (b *BaseOperation) GetBase() *BaseOperation {
+	return b
+}
+
 // StartOperation represents a start operation
 type StartOperation struct {
 	BaseOperation
-	isolationLevel IsolationLevel
+	IsolationLevel IsolationLevel
 }
+
+// OpType returns OpStart
+func (o *StartOperation) OpType() OperationType { return OpStart }
 
 // ReadOperation represents a read operation
 type ReadOperation struct {
 	BaseOperation
-	key        string
-	readResult int
+	Key        string
+	ReadResult int
 }
+
+// OpType returns OpRead
+func (o *ReadOperation) OpType() OperationType { return OpRead }
 
 // WriteOperation represents a write operation
 type WriteOperation struct {
 	BaseOperation
-	key   string
-	value int
+	Key   string
+	Value int
 }
+
+// OpType returns OpWrite
+func (o *WriteOperation) OpType() OperationType { return OpWrite }
 
 // PrepareOperation represents a prepare operation
 type PrepareOperation struct {
 	BaseOperation
 }
 
+// OpType returns OpPrepare
+func (o *PrepareOperation) OpType() OperationType { return OpPrepare }
+
 // CommitOperation represents a commit operation
 type CommitOperation struct {
 	BaseOperation
 }
+
+// OpType returns OpCommit
+func (o *CommitOperation) OpType() OperationType { return OpCommit }
 
 // AbortOperation represents an abort operation
 type AbortOperation struct {
 	BaseOperation
 }
 
+// OpType returns OpAbort
+func (o *AbortOperation) OpType() OperationType { return OpAbort }
+
 // Transaction represents a transaction in the system.
-// Details will be defined later.
 type Transaction struct {
 	TxId       string
 	Sts        uint64
 	Cts        uint64
 	Deps       *Deps
-	Operations []BaseOperation
+	Operations []Operation
 }
 
-func (tx *Transaction) addOperation(op BaseOperation) {
+// AddOperation adds an operation to the transaction.
+func (tx *Transaction) AddOperation(op Operation) {
 	tx.Operations = append(tx.Operations, op)
 }
 
@@ -205,6 +275,17 @@ func (d *Deps) Add(ts uint64) {
 			break
 		}
 	}
+}
+
+func (d *Deps) Contain(ts uint64) bool {
+	if ts <= d.MinDep {
+		return true
+	}
+	if d.DepSet == nil {
+		return false
+	}
+	_, exists := d.DepSet[ts]
+	return exists
 }
 
 // Merge combines another Deps into this one.
