@@ -111,8 +111,8 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	// 2. Atomic write to Store
 	c.replica.Store.BatchPut(c.buffer, c.cts)
 
-	// 3. Add to history
-	c.replica.Store.AddTx(&model.Transaction{
+	// 3. add to history
+	c.replica.Store.AppendTx(&model.Transaction{
 		TxId: c.txId,
 		Sts:  c.sts,
 		Cts:  c.cts,
