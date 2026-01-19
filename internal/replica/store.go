@@ -63,7 +63,7 @@ func (s *Store) GetPendingTx(cts uint64) *model.Transaction {
 }
 
 // RemovePendingTx removes a transaction from the pending cache
-func (s *Store) removePendingTx(cts uint64) {
+func (s *Store) RemovePendingTx(cts uint64) {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 	delete(s.pendingTxs, cts)
@@ -224,7 +224,7 @@ func (s *Store) AppendTx(tx *model.Transaction) {
 func (s *Store) GetTx(cts uint64) *model.Transaction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if !s.deps.Contain(cts) {
+	if !s.deps.Received(cts) {
 		return nil
 	}
 	curr := s.history
