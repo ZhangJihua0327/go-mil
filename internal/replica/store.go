@@ -33,13 +33,40 @@ type Store struct {
 	history   *TxNode
 
 	deps *model.Deps
+
+	// pendingTxs is a cache for transactions received from other nodes but not yet applied
+	pendingMu  sync.Mutex
+	pendingTxs map[uint64]*model.Transaction // key: cts
 }
 
 // NewStore creates a new Store instance
 func NewStore() *Store {
 	return &Store{
-		data: make(map[string]*headLock),
+		data:       make(map[string]*headLock),
+		pendingTxs: make(map[uint64]*model.Transaction),
+		deps:       model.NewDeps(),
 	}
+}
+
+// AddPendingTx adds a transaction to the pending cache
+func (s *Store) AddPendingTx(tx *model.Transaction) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	s.pendingTxs[tx.Cts] = tx
+}
+
+// GetPendingTx retrieves a transaction from the pending cache by cts
+func (s *Store) GetPendingTx(cts uint64) *model.Transaction {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	return s.pendingTxs[cts]
+}
+
+// RemovePendingTx removes a transaction from the pending cache
+func (s *Store) removePendingTx(cts uint64) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	delete(s.pendingTxs, cts)
 }
 
 // getOrCreateLock returns the lock for a specific key, creating it if necessary
@@ -124,21 +151,13 @@ func (s *Store) Get(key string, sts uint64) *ValNode {
 
 // GC deletes all value nodes whose Cts <= ts, except head nodes.
 func (s *Store) GC(ts uint64) {
-	s.mu.RLock()
-	locks := make([]*headLock, 0, len(s.data))
-	for _, hl := range s.data {
-		locks = append(locks, hl)
-	}
-	s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	for _, hl := range locks {
+	for _, hl := range s.data {
 		hl.mu.Lock()
 		if hl.head != nil {
 			curr := hl.head
-			// Iterate to find the cut-off point
-			// Since list is sorted descending by Cts, once we find a node <= ts,
-			// all following nodes are also <= ts.
-			// We never delete head, so we start checking from head.Next.
 			for curr.Next != nil {
 				if curr.Next.Cts <= ts {
 					curr.Next = nil
@@ -151,12 +170,8 @@ func (s *Store) GC(ts uint64) {
 	}
 
 	// History GC
-	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
-
 	if s.history != nil {
 		curr := s.history
-		// Apply same GC logic as value nodes: preserve head (or first valid), cut off rest
 		for curr.Next != nil {
 			if curr.Next.Tx.Cts <= ts {
 				curr.Next = nil
@@ -167,34 +182,51 @@ func (s *Store) GC(ts uint64) {
 	}
 }
 
-// AddTx adds a transaction to the history, maintaining order by Cts descending
-func (s *Store) AddTx(tx *model.Transaction) {
+// AppendTx adds a transaction to the history and updates deps.
+func (s *Store) AppendTx(tx *model.Transaction) {
 	s.historyMu.Lock()
 	defer s.historyMu.Unlock()
 
 	newNode := &TxNode{
-		Tx: tx,
+		Tx:   tx,
+		Next: nil,
 	}
-
 	if s.history == nil || tx.Cts > s.history.Tx.Cts {
 		newNode.Next = s.history
 		s.history = newNode
-		return
+	} else {
+		curr := s.history
+		for curr.Next != nil && curr.Next.Tx.Cts > tx.Cts {
+			curr = curr.Next
+		}
+		newNode.Next = curr.Next
+		curr.Next = newNode
 	}
+	// Update deps
+	s.mu.Lock()
+	if s.deps == nil {
+		s.deps = model.NewDeps()
+	}
+	s.deps.Add(tx.Cts)
+	s.mu.Unlock()
 
-	curr := s.history
-	for curr.Next != nil && curr.Next.Tx.Cts > tx.Cts {
-		curr = curr.Next
+	cts := tx.Cts
+	for _, op := range tx.Operations {
+		// if op is write-op
+		// Type assertion on interface for Java-like instanceof/casting
+		if writeOp, ok := op.(*model.WriteOperation); ok {
+			s.Put(writeOp.Key, writeOp.Value, cts)
+		}
 	}
-	newNode.Next = curr.Next
-	curr.Next = newNode
 }
 
 // GetTx returns the transaction with the given cts
 func (s *Store) GetTx(cts uint64) *model.Transaction {
-	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
-
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.deps.Contain(cts) {
+		return nil
+	}
 	curr := s.history
 	for curr != nil {
 		if curr.Tx.Cts == cts {
