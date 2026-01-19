@@ -277,7 +277,7 @@ func (d *Deps) Add(ts uint64) {
 	}
 }
 
-func (d *Deps) Contain(ts uint64) bool {
+func (d *Deps) Received(ts uint64) bool {
 	if ts <= d.MinDep {
 		return true
 	}

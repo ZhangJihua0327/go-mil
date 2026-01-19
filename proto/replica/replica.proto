@@ -6,6 +6,7 @@ option go_package = "go-mil/proto/replica";
 
 service ReplicaService {
     rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {}
+    rpc DeliverTransaction(DeliverTransactionRequest) returns (DeliverTransactionResponse) {}
 
     // User-facing transaction operations
     rpc Start(StartRequest) returns (StartResponse) {}
@@ -23,6 +24,42 @@ message GetTransactionResponse {
     string tx_id = 1;
     uint64 cts = 2;
     bool found = 3;
+    Transaction tx = 4;
+}
+
+message DeliverTransactionRequest {
+    Transaction tx = 1;
+}
+
+message DeliverTransactionResponse {
+    bool success = 1;
+}
+
+message Transaction {
+    string tx_id = 1;
+    uint64 sts = 2;
+    uint64 cts = 3;
+    Deps deps = 4;
+    repeated Operation operations = 5;
+}
+
+message Deps {
+    uint64 min_dep = 1;
+    repeated uint64 dep_set = 2;
+}
+
+message Operation {
+    enum Type {
+        START = 0;
+        READ = 1;
+        WRITE = 2;
+        PREPARE = 3;
+        COMMIT = 4;
+        ABORT = 5;
+    }
+    Type type = 1;
+    string key = 2;
+    int64 value = 3;
 }
 
 message StartRequest {

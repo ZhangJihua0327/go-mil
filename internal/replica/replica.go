@@ -94,12 +94,120 @@ func (r *Replica) Close() {
 	}
 }
 
-func (r *Replica) checkCausalDelivery(ts uint64) error {
+// EnsureCausal ensures that the transaction with the given cts and all its dependencies are received.
+func (r *Replica) EnsureCausal(ts uint64) error {
+	tx := r.Store.pendingTxs[ts]
+	if tx == nil {
+		// Try to fetch from peers
+		tx = r.fetchTxFromPeers(ts)
+		if tx == nil {
+			return fmt.Errorf("missing transaction with cts %d", ts)
+		}
+	} else {
+		r.Store.RemovePendingTx(ts)
+	}
+	// Ensure dependencies
+	if tx.Deps.MinDep > r.Store.deps.MinDep {
+		err := r.EnsureTotal(tx.Deps.MinDep)
+		if err != nil {
+			return err
+		}
+	}
+	for depTs := range tx.Deps.DepSet {
+		err := r.EnsureCausal(depTs)
+		if err != nil {
+			return err
+		}
+	}
+	r.Store.AppendTx(tx)
 	return nil
 }
 
-func (r *Replica) checkTotalDelivery(ts uint64) error {
+// EnsureTotal ensures all transactions with cts <= ts are received.
+func (r *Replica) EnsureTotal(ts uint64) error {
+	for cts := uint64(r.Store.deps.MinDep); cts <= ts; cts++ {
+		if r.Store.deps.Received(cts) {
+			continue
+		}
+		tx := r.Store.pendingTxs[cts]
+		if tx == nil {
+			// Try to fetch from peers
+			tx = r.fetchTxFromPeers(cts)
+			if tx == nil {
+				return fmt.Errorf("missing transaction with cts %d", cts)
+			}
+		} else {
+			r.Store.RemovePendingTx(cts)
+		}
+		r.Store.AppendTx(tx)
+	}
 	return nil
+}
+
+func (r *Replica) SendTxToPeers(tx *model.Transaction) {
+	pbTx := modelToProto(tx)
+	req := &pb.DeliverTransactionRequest{Tx: pbTx}
+
+	var wg sync.WaitGroup
+	for id, client := range r.peerClients {
+		wg.Add(1)
+		go func(peerID string, c pb.ReplicaServiceClient) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			_, err := c.DeliverTransaction(ctx, req)
+			if err != nil {
+				fmt.Printf("Error sending tx %d to peer %s: %v\n", tx.Cts, peerID, err)
+			}
+		}(id, client)
+	}
+	wg.Wait()
+}
+
+func modelToProto(m *model.Transaction) *pb.Transaction {
+	p := &pb.Transaction{
+		TxId: m.TxId,
+		Sts:  m.Sts,
+		Cts:  m.Cts,
+		Deps: &pb.Deps{
+			MinDep: m.Deps.MinDep,
+			DepSet: make([]uint64, 0, len(m.Deps.DepSet)),
+		},
+		Operations: make([]*pb.Operation, 0, len(m.Operations)),
+	}
+
+	for d := range m.Deps.DepSet {
+		p.Deps.DepSet = append(p.Deps.DepSet, d)
+	}
+
+	for _, op := range m.Operations {
+		pbOp := &pb.Operation{}
+		switch op.OpType() {
+		case model.OpStart:
+			pbOp.Type = pb.Operation_START
+		case model.OpRead:
+			pbOp.Type = pb.Operation_READ
+			if rop, ok := op.(*model.ReadOperation); ok {
+				pbOp.Key = rop.Key
+			}
+		case model.OpWrite:
+			pbOp.Type = pb.Operation_WRITE
+			if wop, ok := op.(*model.WriteOperation); ok {
+				pbOp.Key = wop.Key
+				pbOp.Value = int64(wop.Value)
+			}
+		case model.OpPrepare:
+			pbOp.Type = pb.Operation_PREPARE
+		case model.OpCommit:
+			pbOp.Type = pb.Operation_COMMIT
+		case model.OpAbort:
+			pbOp.Type = pb.Operation_ABORT
+		}
+		p.Operations = append(p.Operations, pbOp)
+	}
+
+	return p
 }
 
 func (r *Replica) fetchTxFromPeers(cts uint64) *model.Transaction {
@@ -109,6 +217,9 @@ func (r *Replica) fetchTxFromPeers(cts uint64) *model.Transaction {
 		cancel()
 
 		if err == nil && resp.Found {
+			if resp.Tx != nil {
+				return protoToModel(resp.Tx)
+			}
 			return &model.Transaction{
 				TxId: resp.TxId,
 				Cts:  resp.Cts,
