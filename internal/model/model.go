@@ -121,16 +121,21 @@ type BaseOperation struct {
 // StartOperation represents a start operation
 type StartOperation struct {
 	BaseOperation
+	isolationLevel IsolationLevel
 }
 
 // ReadOperation represents a read operation
 type ReadOperation struct {
 	BaseOperation
+	key        string
+	readResult int
 }
 
 // WriteOperation represents a write operation
 type WriteOperation struct {
 	BaseOperation
+	key   string
+	value int
 }
 
 // PrepareOperation represents a prepare operation
@@ -156,6 +161,10 @@ type Transaction struct {
 	Cts        uint64
 	Deps       *Deps
 	Operations []BaseOperation
+}
+
+func (tx *Transaction) addOperation(op BaseOperation) {
+	tx.Operations = append(tx.Operations, op)
 }
 
 // Deps represents the set of transactions visible to the current node.

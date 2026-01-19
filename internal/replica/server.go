@@ -33,27 +33,3 @@ func (s *Server) GetTransaction(_ context.Context, req *pb.GetTransactionRequest
 
 	return &pb.GetTransactionResponse{Found: false}, nil
 }
-
-// Get handles the Get RPC request
-func (s *Server) Get(_ context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
-	s.replica.mu.RLock()
-	defer s.replica.mu.RUnlock()
-
-	// Check local store
-	if node := s.replica.Store.Get(req.Key, req.Sts); node != nil {
-		return &pb.GetResponse{
-			Value: int64(node.Value),
-			Found: true,
-		}, nil
-	}
-
-	return &pb.GetResponse{Found: false}, nil
-}
-
-// BatchPut handles the BatchPut RPC request
-func (s *Server) BatchPut(_ context.Context, req *pb.BatchPutRequest) (*pb.BatchPutResponse, error) {
-	// Apply locally
-	s.replica.applyToStore(req)
-
-	return &pb.BatchPutResponse{Success: true}, nil
-}

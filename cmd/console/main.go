@@ -67,7 +67,7 @@ func runConsole(txn replica.TxnClient) {
 }
 
 func handleStart(txn replica.TxnClient) string {
-	txID, sts, err := txn.Start(nil)
+	txID, sts, err := txn.Start(nil, "")
 	if err != nil {
 		fmt.Printf("start failed: %v\n", err)
 		return ""
