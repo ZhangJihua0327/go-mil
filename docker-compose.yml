@@ -29,7 +29,7 @@ services:
       - REPLICA_ID=replica1
       - PORT=50052
       - TSO_ADDR=tso:50051
-      - CENTRAL_MODE=false
+      - CENTRAL_MODE=true
       - PEER1_ID=replica2
       - PEER1_ADDR=replica2:50053
       - PEER2_ID=replica3
@@ -58,7 +58,7 @@ services:
       - REPLICA_ID=replica2
       - PORT=50053
       - TSO_ADDR=tso:50051
-      - CENTRAL_MODE=false
+      - CENTRAL_MODE=true
       - PEER1_ID=replica1
       - PEER1_ADDR=replica1:50052
       - PEER2_ID=replica3
@@ -87,7 +87,7 @@ services:
       - REPLICA_ID=replica3
       - PORT=50054
       - TSO_ADDR=tso:50051
-      - CENTRAL_MODE=false
+      - CENTRAL_MODE=true
       - PEER1_ID=replica1
       - PEER1_ADDR=replica1:50052
       - PEER2_ID=replica2
@@ -116,7 +116,7 @@ services:
       - REPLICA_ID=replica4
       - PORT=50055
       - TSO_ADDR=tso:50051
-      - CENTRAL_MODE=false
+      - CENTRAL_MODE=true
       - PEER1_ID=replica1
       - PEER1_ADDR=replica1:50052
       - PEER2_ID=replica2
@@ -145,7 +145,7 @@ services:
       - REPLICA_ID=replica5
       - PORT=50056
       - TSO_ADDR=tso:50051
-      - CENTRAL_MODE=false
+      - CENTRAL_MODE=true
       - PEER1_ID=replica1
       - PEER1_ADDR=replica1:50052
       - PEER2_ID=replica2
