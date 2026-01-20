@@ -66,17 +66,14 @@ func protoToModel(p *pb.Transaction) *model.Transaction {
 
 	for _, op := range p.Operations {
 		var modelOp model.Operation
-		base := model.BaseOperation{
-			TxID: p.TxId,
-			Sts:  p.Sts,
-		}
+		base := model.BaseOperation{}
 
 		switch op.Type {
 		case pb.Operation_WRITE:
 			modelOp = &model.WriteOperation{
 				BaseOperation: base,
 				Key:           op.Key,
-				Value:         int(op.Value),
+				Value:         op.Value,
 			}
 		case pb.Operation_READ:
 			modelOp = &model.ReadOperation{
