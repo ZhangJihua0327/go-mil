@@ -179,7 +179,7 @@ func (o *StartOperation) OpType() OperationType { return OpStart }
 type ReadOperation struct {
 	BaseOperation
 	Key        string
-	ReadResult int
+	ReadResult int64
 }
 
 // OpType returns OpRead
@@ -189,7 +189,7 @@ func (o *ReadOperation) OpType() OperationType { return OpRead }
 type WriteOperation struct {
 	BaseOperation
 	Key   string
-	Value int
+	Value int64
 }
 
 // OpType returns OpWrite
@@ -234,9 +234,9 @@ func (tx *Transaction) AddOperation(op Operation) {
 	tx.Operations = append(tx.Operations, op)
 }
 
-func (tx *Transaction) WRSet() (map[string]int, map[string]int) {
-	wSet := make(map[string]int)
-	rSet := make(map[string]int)
+func (tx *Transaction) WRSet() (map[string]int64, map[string]int64) {
+	wSet := make(map[string]int64)
+	rSet := make(map[string]int64)
 	for _, op := range tx.Operations {
 		switch o := op.(type) {
 		case *WriteOperation:

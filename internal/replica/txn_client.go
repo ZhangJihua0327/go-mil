@@ -24,7 +24,7 @@ type CentralizedClient struct {
 	replica *Replica
 	txId    string
 	tx      model.Transaction
-	buffer  map[string]int
+	buffer  map[string]int64
 	active  bool
 	mu      sync.Mutex
 }
@@ -32,7 +32,7 @@ type CentralizedClient struct {
 func NewCentralizedClient(r *Replica) *CentralizedClient {
 	return &CentralizedClient{
 		replica: r,
-		buffer:  make(map[string]int),
+		buffer:  make(map[string]int64),
 	}
 }
 
@@ -51,13 +51,13 @@ func (c *CentralizedClient) Start(ctx context.Context, isolationLevel string) (s
 		Deps:           c.replica.Store.deps.Clone(),
 		IsolationLevel: model.ParseIsolationLevel(isolationLevel),
 	}
-	c.buffer = make(map[string]int)
+	c.buffer = make(map[string]int64)
 	c.active = true
 	c.tx.AddOperation(&model.StartOperation{})
 	return c.txId, sts, nil
 }
 
-func (c *CentralizedClient) Read(ctx context.Context, key string) (int, bool, error) {
+func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -65,7 +65,7 @@ func (c *CentralizedClient) Read(ctx context.Context, key string) (int, bool, er
 		return 0, false, fmt.Errorf("no active transaction")
 	}
 
-	var val int
+	var val int64
 	var succeed bool
 	// 1. Read from buffer first
 	if value, exists := c.buffer[key]; exists {
@@ -100,10 +100,10 @@ func (c *CentralizedClient) Write(ctx context.Context, key string, value int64) 
 	}
 
 	// Write to buffer
-	c.buffer[key] = int(value)
+	c.buffer[key] = value
 	c.tx.AddOperation(&model.WriteOperation{
 		Key:   key,
-		Value: int(value),
+		Value: value,
 	})
 
 	return nil

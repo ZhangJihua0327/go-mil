@@ -7,7 +7,7 @@ import (
 
 // ValNode represents a version in the MVCC chain
 type ValNode struct {
-	Value int      // The value of this version
+	Value int64    // The value of this version
 	Cts   uint64   // Commit timestamp
 	Next  *ValNode // Pointer to the next (older) version
 }
@@ -90,7 +90,7 @@ func (s *Store) getOrCreateLock(key string) *headLock {
 }
 
 // Put inserts a new version ensuring the list is sorted by Cts descending
-func (s *Store) Put(key string, val int, cts uint64) {
+func (s *Store) Put(key string, val int64, cts uint64) {
 	hl := s.getOrCreateLock(key)
 
 	hl.mu.Lock()
@@ -120,7 +120,7 @@ func (s *Store) Put(key string, val int, cts uint64) {
 }
 
 // BatchPut inserts multiple key-value pairs with the same commit timestamp
-func (s *Store) BatchPut(kvs map[string]int, cts uint64) {
+func (s *Store) BatchPut(kvs map[string]int64, cts uint64) {
 	for k, v := range kvs {
 		s.Put(k, v, cts)
 	}
