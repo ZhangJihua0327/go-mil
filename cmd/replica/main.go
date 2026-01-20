@@ -21,6 +21,7 @@ import (
 // Commands: start, read <key>, write <key> <value>, commit, abort, exit
 func main() {
 	_ = flag.String("addr", "unused", "deprecated: no rpc in console")
+	noServer := flag.Bool("no-server", false, "if true, don't start the gRPC server")
 	flag.Parse()
 
 	cfg := config.LoadReplicaConfig()
@@ -30,19 +31,21 @@ func main() {
 	}
 
 	// Start gRPC server in background
-	lis, err := net.Listen("tcp", ":"+cfg.Port)
-	if err != nil {
-		log.Fatalf("failed to listen on port %s: %v", cfg.Port, err)
-	}
-	grpcServer := grpc.NewServer()
-	pb.RegisterReplicaServiceServer(grpcServer, replica.NewServer(r))
-
-	go func() {
-		fmt.Printf("Replica Server %s starting on :%s...\n", cfg.ReplicaID, cfg.Port)
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("failed to serve gRPC: %v", err)
+	if !*noServer {
+		lis, err := net.Listen("tcp", ":"+cfg.Port)
+		if err != nil {
+			log.Fatalf("failed to listen on port %s: %v", cfg.Port, err)
 		}
-	}()
+		grpcServer := grpc.NewServer()
+		pb.RegisterReplicaServiceServer(grpcServer, replica.NewServer(r))
+
+		go func() {
+			fmt.Printf("Replica Server %s starting on :%s...\n", cfg.ReplicaID, cfg.Port)
+			if err := grpcServer.Serve(lis); err != nil {
+				log.Fatalf("failed to serve gRPC: %v", err)
+			}
+		}()
+	}
 
 	var client replica.TxnClient
 	if cfg.CentralMode {
@@ -52,6 +55,8 @@ func main() {
 	}
 
 	runConsole(client)
+	// If console exits (e.g. in non-interactive Docker), keep the gRPC server running
+	select {}
 }
 
 func runConsole(txn replica.TxnClient) {

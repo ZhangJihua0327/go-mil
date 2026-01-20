@@ -132,7 +132,7 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	c.active = false
 	c.tx = model.Transaction{}
 	c.buffer = nil
-	return c.tx.Cts, nil
+	return cts, nil
 }
 
 func (c *CentralizedClient) Abort(ctx context.Context) error {
