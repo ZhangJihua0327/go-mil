@@ -3,6 +3,7 @@ package tso
 import (
 	"context"
 	pb "go-mil/proto/tso"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,15 +35,18 @@ func NewTsoServer() *Server {
 
 func (s *Server) Tick(ctx context.Context, _ *pb.TickRequest) (*pb.TickResponse, error) {
 	val := atomic.LoadInt64(&s.current)
+	log.Printf("[TSO] Tick: current=%d", val)
 	return &pb.TickResponse{Timestamp: val}, nil
 }
 
 func (s *Server) Tock(ctx context.Context, _ *pb.TockRequest) (*pb.TockResponse, error) {
 	val := atomic.AddInt64(&s.current, 1)
+	log.Printf("[TSO] Tock: new=%d", val)
 	return &pb.TockResponse{Timestamp: val}, nil
 }
 
 func (s *Server) BatchLock(_ context.Context, req *pb.BatchLockRequest) (*pb.BatchLockResponse, error) {
+	log.Printf("[TSO] BatchLock: owner=%s keys=%v ttl=%dms", req.OwnerId, req.Keys, req.TtlMs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -65,6 +69,7 @@ func (s *Server) BatchLock(_ context.Context, req *pb.BatchLockRequest) (*pb.Bat
 
 	// Atomic batch acquisition: if any fail, none are acquired
 	if len(failedKeys) > 0 {
+		log.Printf("[TSO] BatchLock FAILED: owner=%s failed_keys=%v", req.OwnerId, failedKeys)
 		return &pb.BatchLockResponse{
 			Success:    false,
 			FailedKeys: failedKeys,
@@ -85,10 +90,12 @@ func (s *Server) BatchLock(_ context.Context, req *pb.BatchLockRequest) (*pb.Bat
 		}
 	}
 
+	log.Printf("[TSO] BatchLock SUCCESS: owner=%s keys=%v", req.OwnerId, req.Keys)
 	return &pb.BatchLockResponse{Success: true}, nil
 }
 
 func (s *Server) BatchUnlock(_ context.Context, req *pb.BatchUnlockRequest) (*pb.BatchUnlockResponse, error) {
+	log.Printf("[TSO] BatchUnlock: owner=%s keys=%v", req.OwnerId, req.Keys)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

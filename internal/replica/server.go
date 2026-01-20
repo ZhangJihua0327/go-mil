@@ -4,6 +4,7 @@ import (
 	"context"
 	"go-mil/internal/model"
 	pb "go-mil/proto/replica"
+	"log"
 )
 
 // Server implements the ReplicaService gRPC server
@@ -21,10 +22,12 @@ func NewServer(r *Replica) *Server {
 
 // GetTransaction handles request to retrieve a transaction by its commit timestamp
 func (s *Server) GetTransaction(_ context.Context, req *pb.GetTransactionRequest) (*pb.GetTransactionResponse, error) {
+	log.Printf("[ReplicaServer] GetTransaction: cts=%d", req.Cts)
 	s.replica.mu.RLock()
 	defer s.replica.mu.RUnlock()
 
 	if tx := s.replica.Store.GetTx(req.Cts); tx != nil {
+		log.Printf("[ReplicaServer] GetTransaction SUCCESS: txid=%s cts=%d", tx.TxId, tx.Cts)
 		return &pb.GetTransactionResponse{
 			TxId:  tx.TxId,
 			Cts:   tx.Cts,
@@ -39,10 +42,12 @@ func (s *Server) GetTransaction(_ context.Context, req *pb.GetTransactionRequest
 // DeliverTransaction handles the delivery of a transaction from another replica
 func (s *Server) DeliverTransaction(_ context.Context, req *pb.DeliverTransactionRequest) (*pb.DeliverTransactionResponse, error) {
 	if req.Tx == nil {
+		log.Printf("[ReplicaServer] DeliverTransaction FAILED: nil tx")
 		return &pb.DeliverTransactionResponse{Success: false}, nil
 	}
 
 	tx := protoToModel(req.Tx)
+	log.Printf("[ReplicaServer] DeliverTransaction: txid=%s sts=%d cts=%d", tx.TxId, tx.Sts, tx.Cts)
 	s.replica.Store.AddPendingTx(tx)
 
 	return &pb.DeliverTransactionResponse{Success: true}, nil

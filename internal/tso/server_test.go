@@ -50,6 +50,35 @@ func TestTickTock(t *testing.T) {
 	}
 }
 
+func TestConcurrentTock(t *testing.T) {
+	s := NewTsoServer()
+	ctx := context.Background()
+	n := 1000
+	done := make(chan bool)
+
+	for i := 0; i < n; i++ {
+		go func() {
+			_, err := s.Tock(ctx, &pb.TockRequest{})
+			if err != nil {
+				t.Errorf("Concurrent Tock failed: %v", err)
+			}
+			done <- true
+		}()
+	}
+
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	resp, err := s.Tick(ctx, &pb.TickRequest{})
+	if err != nil {
+		t.Fatalf("Tick failed: %v", err)
+	}
+	if resp.Timestamp != int64(n) {
+		t.Errorf("Expected timestamp %d after %d concurrent Tocks, got %d", n, n, resp.Timestamp)
+	}
+}
+
 func TestBatchLock(t *testing.T) {
 	s := NewTsoServer()
 	ctx := context.Background()
