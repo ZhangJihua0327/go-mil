@@ -169,24 +169,23 @@ func (s *Store) GC(ts uint64) {
 	// History GC
 	s.historyMu.Lock()
 	if len(s.history) > 0 {
-		// Find the index of the first transaction that should be kept.
-		// We keep all transactions with Cts > ts.
-		// If we want to keep at least the latest one (even if <= ts) to mimic old behavior:
-		idx, _ := slices.BinarySearchFunc(s.history, ts, func(t *model.Transaction, target uint64) int {
+		// Find the index of the first transaction that has Cts > ts.
+		idx, found := slices.BinarySearchFunc(s.history, ts, func(t *model.Transaction, target uint64) int {
 			return cmp.Compare(t.Cts, target)
 		})
 
-		// idx is where Cts would be inserted or is found.
-		// Transactions from 0 to idx-1 have Cts <= ts.
-		// However, old logic kept the latest one. In ascending slice, latest is at the end.
-		// If all transactions are <= ts, idx will be len(s.history).
-		// To keep at least one if it exists:
-		if idx > 0 && idx == len(s.history) {
-			idx = len(s.history) - 1
+		splitIdx := idx
+		if found {
+			splitIdx++
 		}
 
-		if idx > 0 {
-			s.history = s.history[idx:]
+		// To mimic the original behavior of keeping at least the latest transaction:
+		if splitIdx == len(s.history) {
+			splitIdx = len(s.history) - 1
+		}
+
+		if splitIdx > 0 {
+			s.history = s.history[splitIdx:]
 		}
 	}
 	s.historyMu.Unlock()
@@ -196,12 +195,10 @@ func (s *Store) GC(ts uint64) {
 func (s *Store) AppendTx(tx *model.Transaction) {
 	s.historyMu.Lock()
 	// Insert into history while maintaining ascending order by Cts
-	idx, found := slices.BinarySearchFunc(s.history, tx.Cts, func(t *model.Transaction, target uint64) int {
+	idx, _ := slices.BinarySearchFunc(s.history, tx.Cts, func(t *model.Transaction, target uint64) int {
 		return cmp.Compare(t.Cts, target)
 	})
-	if !found {
-		s.history = slices.Insert(s.history, idx, tx)
-	}
+	s.history = slices.Insert(s.history, idx, tx)
 	s.historyMu.Unlock()
 
 	// Update deps
