@@ -1,0 +1,167 @@
+version: '3.8'
+
+services:
+  # TSO 服务（时间戳生成器）
+  tso:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tso
+    hostname: tso
+    environment:
+      - NODE_TYPE=tso
+      - PORT=50051
+    ports:
+      - "50051:50051"
+    networks:
+      - go-mil-network
+    restart: unless-stopped
+
+  # Replica 1
+  replica1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replica1
+    hostname: replica1
+    environment:
+      - NODE_TYPE=replica
+      - REPLICA_ID=replica1
+      - PORT=50052
+      - TSO_ADDR=tso:50051
+      - CENTRAL_MODE=false
+      - PEER1_ID=replica2
+      - PEER1_ADDR=replica2:50053
+      - PEER2_ID=replica3
+      - PEER2_ADDR=replica3:50054
+      - PEER3_ID=replica4
+      - PEER3_ADDR=replica4:50055
+      - PEER4_ID=replica5
+      - PEER4_ADDR=replica5:50056
+    ports:
+      - "50052:50052"
+    networks:
+      - go-mil-network
+    depends_on:
+      - tso
+    restart: unless-stopped
+
+  # Replica 2
+  replica2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replica2
+    hostname: replica2
+    environment:
+      - NODE_TYPE=replica
+      - REPLICA_ID=replica2
+      - PORT=50053
+      - TSO_ADDR=tso:50051
+      - CENTRAL_MODE=false
+      - PEER1_ID=replica1
+      - PEER1_ADDR=replica1:50052
+      - PEER2_ID=replica3
+      - PEER2_ADDR=replica3:50054
+      - PEER3_ID=replica4
+      - PEER3_ADDR=replica4:50055
+      - PEER4_ID=replica5
+      - PEER4_ADDR=replica5:50056
+    ports:
+      - "50053:50053"
+    networks:
+      - go-mil-network
+    depends_on:
+      - tso
+    restart: unless-stopped
+
+  # Replica 3
+  replica3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replica3
+    hostname: replica3
+    environment:
+      - NODE_TYPE=replica
+      - REPLICA_ID=replica3
+      - PORT=50054
+      - TSO_ADDR=tso:50051
+      - CENTRAL_MODE=false
+      - PEER1_ID=replica1
+      - PEER1_ADDR=replica1:50052
+      - PEER2_ID=replica2
+      - PEER2_ADDR=replica2:50053
+      - PEER3_ID=replica4
+      - PEER3_ADDR=replica4:50055
+      - PEER4_ID=replica5
+      - PEER4_ADDR=replica5:50056
+    ports:
+      - "50054:50054"
+    networks:
+      - go-mil-network
+    depends_on:
+      - tso
+    restart: unless-stopped
+
+  # Replica 4
+  replica4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replica4
+    hostname: replica4
+    environment:
+      - NODE_TYPE=replica
+      - REPLICA_ID=replica4
+      - PORT=50055
+      - TSO_ADDR=tso:50051
+      - CENTRAL_MODE=false
+      - PEER1_ID=replica1
+      - PEER1_ADDR=replica1:50052
+      - PEER2_ID=replica2
+      - PEER2_ADDR=replica2:50053
+      - PEER3_ID=replica3
+      - PEER3_ADDR=replica3:50054
+      - PEER4_ID=replica5
+      - PEER4_ADDR=replica5:50056
+    ports:
+      - "50055:50055"
+    networks:
+      - go-mil-network
+    depends_on:
+      - tso
+    restart: unless-stopped
+
+  # Replica 5
+  replica5:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: replica5
+    hostname: replica5
+    environment:
+      - NODE_TYPE=replica
+      - REPLICA_ID=replica5
+      - PORT=50056
+      - TSO_ADDR=tso:50051
+      - CENTRAL_MODE=false
+      - PEER1_ID=replica1
+      - PEER1_ADDR=replica1:50052
+      - PEER2_ID=replica2
+      - PEER2_ADDR=replica2:50053
+      - PEER3_ID=replica3
+      - PEER3_ADDR=replica3:50054
+      - PEER4_ID=replica4
+      - PEER4_ADDR=replica4:50055
+    ports:
+      - "50056:50056"
+    networks:
+      - go-mil-network
+    depends_on:
+      - tso
+    restart: unless-stopped
+
+networks:
+  go-mil-network:
+    driver: bridge
