@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"go-mil/internal/config"
 	"go-mil/internal/replica"
+	pb "go-mil/proto/replica"
+	"google.golang.org/grpc"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +28,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create replica: %v", err)
 	}
+
+	// Start gRPC server in background
+	lis, err := net.Listen("tcp", ":"+cfg.Port)
+	if err != nil {
+		log.Fatalf("failed to listen on port %s: %v", cfg.Port, err)
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterReplicaServiceServer(grpcServer, replica.NewServer(r))
+
+	go func() {
+		fmt.Printf("Replica Server %s starting on :%s...\n", cfg.ReplicaID, cfg.Port)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve gRPC: %v", err)
+		}
+	}()
 
 	var client replica.TxnClient
 	if cfg.CentralMode {
