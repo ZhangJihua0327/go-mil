@@ -1,7 +1,9 @@
 package replica
 
 import (
+	"cmp"
 	"go-mil/internal/model"
+	"slices"
 	"sync"
 )
 
@@ -18,19 +20,13 @@ type headLock struct {
 	head *ValNode
 }
 
-// TxNode represents a node in the transaction history
-type TxNode struct {
-	Tx   *model.Transaction
-	Next *TxNode
-}
-
 // Store represents the Key-Value map with MVCC support
 type Store struct {
 	mu   sync.RWMutex
 	data map[string]*headLock
 
-	historyMu sync.Mutex
-	history   *TxNode
+	historyMu sync.RWMutex
+	history   []*model.Transaction
 
 	deps *model.Deps
 
@@ -45,6 +41,7 @@ func NewStore() *Store {
 		data:       make(map[string]*headLock),
 		pendingTxs: make(map[uint64]*model.Transaction),
 		deps:       model.NewDeps(),
+		history:    make([]*model.Transaction, 0),
 	}
 }
 
@@ -170,38 +167,43 @@ func (s *Store) GC(ts uint64) {
 	}
 
 	// History GC
-	if s.history != nil {
-		curr := s.history
-		for curr.Next != nil {
-			if curr.Next.Tx.Cts <= ts {
-				curr.Next = nil
-				break
-			}
-			curr = curr.Next
+	s.historyMu.Lock()
+	if len(s.history) > 0 {
+		// Find the index of the first transaction that should be kept.
+		// We keep all transactions with Cts > ts.
+		// If we want to keep at least the latest one (even if <= ts) to mimic old behavior:
+		idx, _ := slices.BinarySearchFunc(s.history, ts, func(t *model.Transaction, target uint64) int {
+			return cmp.Compare(t.Cts, target)
+		})
+
+		// idx is where Cts would be inserted or is found.
+		// Transactions from 0 to idx-1 have Cts <= ts.
+		// However, old logic kept the latest one. In ascending slice, latest is at the end.
+		// If all transactions are <= ts, idx will be len(s.history).
+		// To keep at least one if it exists:
+		if idx > 0 && idx == len(s.history) {
+			idx = len(s.history) - 1
+		}
+
+		if idx > 0 {
+			s.history = s.history[idx:]
 		}
 	}
+	s.historyMu.Unlock()
 }
 
 // AppendTx adds a transaction to the history and updates deps.
 func (s *Store) AppendTx(tx *model.Transaction) {
 	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
+	// Insert into history while maintaining ascending order by Cts
+	idx, found := slices.BinarySearchFunc(s.history, tx.Cts, func(t *model.Transaction, target uint64) int {
+		return cmp.Compare(t.Cts, target)
+	})
+	if !found {
+		s.history = slices.Insert(s.history, idx, tx)
+	}
+	s.historyMu.Unlock()
 
-	newNode := &TxNode{
-		Tx:   tx,
-		Next: nil,
-	}
-	if s.history == nil || tx.Cts > s.history.Tx.Cts {
-		newNode.Next = s.history
-		s.history = newNode
-	} else {
-		curr := s.history
-		for curr.Next != nil && curr.Next.Tx.Cts > tx.Cts {
-			curr = curr.Next
-		}
-		newNode.Next = curr.Next
-		curr.Next = newNode
-	}
 	// Update deps
 	s.mu.Lock()
 	if s.deps == nil {
@@ -223,19 +225,22 @@ func (s *Store) AppendTx(tx *model.Transaction) {
 // GetTx returns the transaction with the given cts
 func (s *Store) GetTx(cts uint64) *model.Transaction {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if !s.deps.IsReceived(cts) {
+	received := s.deps.IsReceived(cts)
+	s.mu.RUnlock()
+
+	if !received {
 		return nil
 	}
-	curr := s.history
-	for curr != nil {
-		if curr.Tx.Cts == cts {
-			return curr.Tx
-		}
-		if curr.Tx.Cts < cts {
-			return nil
-		}
-		curr = curr.Next
+
+	s.historyMu.RLock()
+	defer s.historyMu.RUnlock()
+
+	idx, found := slices.BinarySearchFunc(s.history, cts, func(t *model.Transaction, target uint64) int {
+		return cmp.Compare(t.Cts, target)
+	})
+
+	if found {
+		return s.history[idx]
 	}
 	return nil
 }
