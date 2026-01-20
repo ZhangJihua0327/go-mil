@@ -7,6 +7,7 @@ import (
 	"go-mil/internal/model"
 	pb "go-mil/proto/replica"
 	tso "go-mil/proto/tso"
+	"log"
 	"sync"
 	"time"
 
@@ -148,21 +149,24 @@ func (r *Replica) SendTxToPeers(tx *model.Transaction) {
 	pbTx := modelToProto(tx)
 	req := &pb.DeliverTransactionRequest{Tx: pbTx}
 
-	var wg sync.WaitGroup
-	for id, client := range r.peerClients {
-		wg.Add(1)
-		go func(peerID string, c pb.ReplicaServiceClient) {
-			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
+	go func() {
+		var wg sync.WaitGroup
+		for id, client := range r.peerClients {
+			wg.Add(1)
+			go func(peerID string, c pb.ReplicaServiceClient) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				log.Printf("[Replica] Sending transaction to peer %s", peerID)
+				_, err := c.DeliverTransaction(ctx, req)
 
-			_, err := c.DeliverTransaction(ctx, req)
-			if err != nil {
-				fmt.Printf("Error sending tx %d to peer %s: %v\n", tx.Cts, peerID, err)
-			}
-		}(id, client)
-	}
-	wg.Wait()
+				if err != nil {
+					fmt.Printf("Error sending tx %d to peer %s: %v\n", pbTx.Cts, peerID, err)
+				}
+			}(id, client)
+		}
+		wg.Wait()
+	}()
 }
 
 func modelToProto(m *model.Transaction) *pb.Transaction {
