@@ -88,6 +88,41 @@ func (r *Replica) Tock(ctx context.Context) (uint64, error) {
 	return uint64(resp.Timestamp), nil
 }
 
+func (r *Replica) AcquireLock(ctx context.Context, key string, owner string) error {
+	if r.tsoClient == nil {
+		return fmt.Errorf("TSO client not initialized")
+	}
+	resp, err := r.tsoClient.AcquireLock(ctx, &tso.AcquireLockRequest{
+		Key:     key,
+		OwnerId: owner,
+		TtlMs:   3,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("failed to acquire lock for key %s", key)
+	}
+	return nil
+}
+
+func (r *Replica) ReleaseLock(ctx context.Context, key string, owner string) error {
+	if r.tsoClient == nil {
+		return fmt.Errorf("TSO client not initialized")
+	}
+	resp, err := r.tsoClient.ReleaseLock(ctx, &tso.ReleaseLockRequest{
+		Key:     key,
+		OwnerId: owner,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("failed to release lock for key %s", key)
+	}
+	return nil
+}
+
 // Close closes all persistent connections
 func (r *Replica) Close() {
 	for _, conn := range r.conns {

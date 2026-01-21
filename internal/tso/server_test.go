@@ -4,7 +4,6 @@ import (
 	"context"
 	pb "go-mil/proto/tso"
 	"testing"
-	"time"
 )
 
 func TestTickTock(t *testing.T) {
@@ -79,129 +78,38 @@ func TestConcurrentTock(t *testing.T) {
 	}
 }
 
-func TestBatchLock(t *testing.T) {
+func TestReleaseAllLocks(t *testing.T) {
 	s := NewTsoServer()
 	ctx := context.Background()
 
-	keys := []string{"key1", "key2"}
 	owner1 := "tx1_replica1"
 	owner2 := "tx2_replica2"
 
-	// 1. Successful lock
-	resp, err := s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    keys,
-		OwnerId: owner1,
-		TtlMs:   100,
-	})
+	// 1. owner1 acquires multiple locks
+	s.AcquireLock(ctx, &pb.AcquireLockRequest{Key: "key1", OwnerId: owner1, TtlMs: 1000})
+	s.AcquireLock(ctx, &pb.AcquireLockRequest{Key: "key2", OwnerId: owner1, TtlMs: 1000})
+
+	// 2. owner2 acquires a lock
+	s.AcquireLock(ctx, &pb.AcquireLockRequest{Key: "key3", OwnerId: owner2, TtlMs: 1000})
+
+	// 3. Release all locks for owner1
+	resp, err := s.ReleaseAllLocks(ctx, &pb.ReleaseAllLocksRequest{OwnerId: owner1})
 	if err != nil {
-		t.Fatalf("BatchLock failed: %v", err)
+		t.Fatalf("ReleaseAllLocks failed: %v", err)
 	}
 	if !resp.Success {
-		t.Errorf("Expected lock success, got failed keys: %v", resp.FailedKeys)
+		t.Errorf("Expected success, got false")
 	}
 
-	// 2. Conflict lock from another owner
-	resp, err = s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    []string{"key2", "key3"},
-		OwnerId: owner2,
-		TtlMs:   100,
-	})
-	if err != nil {
-		t.Fatalf("BatchLock failed: %v", err)
-	}
-	if resp.Success {
-		t.Errorf("Expected lock failure due to conflict on key2")
-	}
-	if len(resp.FailedKeys) != 1 || resp.FailedKeys[0] != "key2" {
-		t.Errorf("Expected failed key 'key2', got %v", resp.FailedKeys)
-	}
-
-	// 3. Same owner re-acquiring/extending should succeed
-	resp, err = s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    keys,
-		OwnerId: owner1,
-		TtlMs:   200,
-	})
-	if err != nil {
-		t.Fatalf("BatchLock failed: %v", err)
-	}
-	if !resp.Success {
-		t.Errorf("Expected lock extension success for same owner")
-	}
-
-	// 4. Wait for TTL to expire
-	time.Sleep(250 * time.Millisecond)
-
-	// 5. Another owner should now succeed
-	resp, err = s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    keys,
-		OwnerId: owner2,
-		TtlMs:   100,
-	})
-	if err != nil {
-		t.Fatalf("BatchLock failed: %v", err)
-	}
-	if !resp.Success {
-		t.Errorf("Expected lock success after TTL expiration")
-	}
-}
-
-func TestBatchUnlock(t *testing.T) {
-	s := NewTsoServer()
-	ctx := context.Background()
-
-	keys := []string{"key1", "key2"}
-	owner1 := "tx1_replica1"
-	owner2 := "tx2_replica2"
-
-	// Lock keys
-	_, _ = s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    keys,
-		OwnerId: owner1,
-		TtlMs:   1000,
-	})
-
-	// 1. Wrong owner tries to unlock - should NOT error but also NOT unlock
-	resp, err := s.BatchUnlock(ctx, &pb.BatchUnlockRequest{
-		Keys:    []string{"key1"},
-		OwnerId: owner2,
-	})
-	if err != nil {
-		t.Fatalf("BatchUnlock failed: %v", err)
-	}
-	if !resp.Success {
-		t.Errorf("BatchUnlock response should be success even if no keys were unlocked by this owner")
-	}
-
-	// Verify key1 is still locked by owner1 (try to lock by owner2)
-	respL, _ := s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    []string{"key1"},
-		OwnerId: owner2,
-		TtlMs:   100,
-	})
-	if respL.Success {
-		t.Errorf("Key1 should still be locked by owner1")
-	}
-
-	// 2. Correct owner unlocks
-	resp, err = s.BatchUnlock(ctx, &pb.BatchUnlockRequest{
-		Keys:    []string{"key1"},
-		OwnerId: owner1,
-	})
-	if err != nil {
-		t.Fatalf("BatchUnlock failed: %v", err)
-	}
-	if !resp.Success {
-		t.Errorf("Expected unlock success")
-	}
-
-	// Verify key1 is now free
-	respL, _ = s.BatchLock(ctx, &pb.BatchLockRequest{
-		Keys:    []string{"key1"},
-		OwnerId: owner2,
-		TtlMs:   100,
-	})
+	// 4. Verify owner1's locks are free (owner2 can take them)
+	respL, _ := s.AcquireLock(ctx, &pb.AcquireLockRequest{Key: "key1", OwnerId: owner2, TtlMs: 100})
 	if !respL.Success {
-		t.Errorf("Key1 should be free for owner2 after owner1 unlocked it")
+		t.Errorf("key1 should be free for owner2")
+	}
+
+	// 5. Verify owner2's lock is still held
+	respL, _ = s.AcquireLock(ctx, &pb.AcquireLockRequest{Key: "key3", OwnerId: owner1, TtlMs: 100})
+	if respL.Success {
+		t.Errorf("key3 should still be held by owner2")
 	}
 }
