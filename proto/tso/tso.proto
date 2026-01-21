@@ -9,6 +9,8 @@ service TSO {
   rpc Tock (TockRequest) returns (TockResponse);
   rpc BatchLock (BatchLockRequest) returns (BatchLockResponse);
   rpc BatchUnlock (BatchUnlockRequest) returns (BatchUnlockResponse);
+  rpc AcquireLock (AcquireLockRequest) returns (AcquireLockResponse);
+  rpc ReleaseLock (ReleaseLockRequest) returns (ReleaseLockResponse);
 }
 
 message TickRequest {}
@@ -40,5 +42,24 @@ message BatchUnlockRequest {
 }
 
 message BatchUnlockResponse {
+  bool success = 1;
+}
+
+message AcquireLockRequest {
+  string key = 1;
+  string owner_id = 2; // format: {txid}_{replica_name}
+  int64 ttl_ms = 3;
+}
+
+message AcquireLockResponse {
+  bool success = 1;
+}
+
+message ReleaseLockRequest {
+  string key = 1;
+  string owner_id = 2;
+}
+
+message ReleaseLockResponse {
   bool success = 1;
 }

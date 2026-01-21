@@ -111,3 +111,32 @@ func (s *Server) BatchUnlock(_ context.Context, req *pb.BatchUnlockRequest) (*pb
 
 	return &pb.BatchUnlockResponse{Success: true}, nil
 }
+
+func (s *Server) AcquireLock(ctx context.Context, req *pb.AcquireLockRequest) (*pb.AcquireLockResponse, error) {
+	log.Printf("[TSO] AcquireLock Request: key=%s owner=%s ttl=%dms", req.Key, req.OwnerId, req.TtlMs)
+	resp, err := s.BatchLock(ctx, &pb.BatchLockRequest{
+		Keys:    []string{req.Key},
+		OwnerId: req.OwnerId,
+		TtlMs:   req.TtlMs,
+	})
+	if err != nil {
+		log.Printf("[TSO] AcquireLock ERROR: key=%s err=%v", req.Key, err)
+		return nil, err
+	}
+	log.Printf("[TSO] AcquireLock Response: key=%s success=%v", req.Key, resp.Success)
+	return &pb.AcquireLockResponse{Success: resp.Success}, nil
+}
+
+func (s *Server) ReleaseLock(ctx context.Context, req *pb.ReleaseLockRequest) (*pb.ReleaseLockResponse, error) {
+	log.Printf("[TSO] ReleaseLock Request: key=%s owner=%s", req.Key, req.OwnerId)
+	resp, err := s.BatchUnlock(ctx, &pb.BatchUnlockRequest{
+		Keys:    []string{req.Key},
+		OwnerId: req.OwnerId,
+	})
+	if err != nil {
+		log.Printf("[TSO] ReleaseLock ERROR: key=%s err=%v", req.Key, err)
+		return nil, err
+	}
+	log.Printf("[TSO] ReleaseLock Response: key=%s success=%v", req.Key, resp.Success)
+	return &pb.ReleaseLockResponse{Success: resp.Success}, nil
+}
