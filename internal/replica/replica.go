@@ -123,6 +123,22 @@ func (r *Replica) ReleaseLock(ctx context.Context, key string, owner string) err
 	return nil
 }
 
+func (r *Replica) ReleaseLocksByOwner(ctx context.Context, owner string) error {
+	if r.tsoClient == nil {
+		return fmt.Errorf("TSO client not initialized")
+	}
+	resp, err := r.tsoClient.ReleaseAllLocks(ctx, &tso.ReleaseAllLocksRequest{
+		OwnerId: owner,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("failed to release all locks for owner %s", owner)
+	}
+	return nil
+}
+
 // Close closes all persistent connections
 func (r *Replica) Close() {
 	for _, conn := range r.conns {

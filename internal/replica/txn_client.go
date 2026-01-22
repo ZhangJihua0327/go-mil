@@ -43,15 +43,31 @@ func (c *CentralizedClient) Start(ctx context.Context, isolationLevel string) (s
 	if c.active {
 		return "", 0, fmt.Errorf("transaction already active")
 	}
-
-	sts := c.replica.Store.deps.MaxDeps()
+	isoLevel := model.ParseIsolationLevel(isolationLevel)
+	var sts uint64
+	if isoLevel == model.CC || isoLevel == model.SER {
+		sts, _ = c.replica.Tick(ctx)
+	} else {
+		sts = c.replica.Store.deps.MaxDeps()
+	}
 	c.tx = model.Transaction{
 		TxId:           fmt.Sprintf("tx-%d-%s", sts, c.replica.ID),
 		Sts:            sts,
 		Deps:           c.replica.Store.deps.Clone(),
-		IsolationLevel: model.ParseIsolationLevel(isolationLevel),
+		IsolationLevel: isoLevel,
 	}
 	c.buffer = make(map[string]int64)
+	if isoLevel == model.CC {
+		err := c.replica.EnsureCausal(sts)
+		if err != nil {
+			return "", 0, err
+		}
+	} else if isoLevel == model.PC || isoLevel == model.SI || isoLevel == model.SER {
+		err := c.replica.EnsureTotal(sts)
+		if err != nil {
+			return "", 0, err
+		}
+	}
 	c.active = true
 	c.tx.AddOperation(&model.StartOperation{})
 	return c.txId, sts, nil
@@ -67,6 +83,12 @@ func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, 
 
 	var val int64
 	var succeed bool
+	if c.tx.IsolationLevel == model.SER {
+		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+		if err != nil {
+			return 0, false, err
+		}
+	}
 	// 1. Read from buffer first
 	if value, exists := c.buffer[key]; exists {
 		val = value
@@ -98,7 +120,13 @@ func (c *CentralizedClient) Write(ctx context.Context, key string, value int64) 
 	if !c.active {
 		return fmt.Errorf("no active transaction")
 	}
-
+	isoLevel := c.tx.IsolationLevel
+	if isoLevel == model.SER || isoLevel == model.CC {
+		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+		if err != nil {
+			return err
+		}
+	}
 	// Write to buffer
 	c.buffer[key] = value
 	c.tx.AddOperation(&model.WriteOperation{
@@ -123,12 +151,19 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("failed to get commit timestamp: %v", err)
 	}
 	c.tx.Cts = cts
+	isoLevel := c.tx.IsolationLevel
 
 	// 2. Atomic write to Store
 	c.replica.Store.BatchPut(c.buffer, cts)
 	// 3. add to history
 	c.replica.Store.AppendTx(&c.tx)
 	c.replica.SendTxToPeers(&c.tx)
+	if isoLevel == model.SER || isoLevel == model.CC {
+		err := c.replica.ReleaseLocksByOwner(ctx, c.tx.TxId)
+		if err != nil {
+			return 0, err
+		}
+	}
 	c.active = false
 	c.tx = model.Transaction{}
 	c.buffer = nil
