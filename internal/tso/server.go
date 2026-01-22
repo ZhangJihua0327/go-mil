@@ -52,10 +52,18 @@ func (s *Server) AcquireLock(_ context.Context, req *pb.AcquireLockRequest) (*pb
 
 	now := time.Now()
 	if entry, exists := s.locks[req.Key]; exists {
-		if now.Before(entry.expiresAt) && entry.ownerID != req.OwnerId {
-			log.Printf("[TSO] AcquireLock FAILED: key=%s owned by %s", req.Key, entry.ownerID)
-			return &pb.AcquireLockResponse{Success: false}, nil
+		// Check if lock is still valid (not expired)
+		if now.Before(entry.expiresAt) {
+			if entry.ownerID == req.OwnerId {
+				// Same owner re-acquiring: allow and update TTL
+				log.Printf("[TSO] AcquireLock REACQUIRE: key=%s owner=%s (updating TTL)", req.Key, req.OwnerId)
+			} else {
+				// Different owner: reject
+				log.Printf("[TSO] AcquireLock FAILED: key=%s owned by %s", req.Key, entry.ownerID)
+				return &pb.AcquireLockResponse{Success: false}, nil
+			}
 		}
+		// If expired, allow anyone to acquire
 	}
 
 	ttl := time.Duration(req.TtlMs) * time.Millisecond
