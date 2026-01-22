@@ -28,6 +28,8 @@ type Replica struct {
 	tsoClient   tso.TSOClient
 	peerClients map[string]pb.ReplicaServiceClient
 	conns       []*grpc.ClientConn
+
+	hlc *HLC
 }
 
 // NewReplica creates a new replica instance based on the provided configuration.
@@ -36,6 +38,7 @@ func NewReplica(cfg *config.ReplicaConfig) (*Replica, error) {
 		ID:          cfg.ReplicaID,
 		Store:       NewStore(),
 		peerClients: make(map[string]pb.ReplicaServiceClient),
+		hlc:         NewHLC(),
 	}
 
 	// Connect to TSO

@@ -53,6 +53,28 @@ func (s *Server) DeliverTransaction(_ context.Context, req *pb.DeliverTransactio
 	return &pb.DeliverTransactionResponse{Success: true}, nil
 }
 
+// HlcGet returns the current HLC timestamp
+func (s *Server) HlcGet(_ context.Context, _ *pb.GetHLCTimeRequest) (*pb.HLCTimestamp, error) {
+	ts := s.replica.hlc.Now()
+	return &pb.HLCTimestamp{
+		WallTime: ts.WallTime,
+		Logical:  ts.Logical,
+	}, nil
+}
+
+// HlcUpdate updates the local HLC with a remote timestamp
+func (s *Server) HlcUpdate(_ context.Context, req *pb.HLCTimestamp) (*pb.HLCTimestamp, error) {
+	remoteTs := HLCTimestamp{
+		WallTime: req.WallTime,
+		Logical:  req.Logical,
+	}
+	ts := s.replica.hlc.Update(remoteTs)
+	return &pb.HLCTimestamp{
+		WallTime: ts.WallTime,
+		Logical:  ts.Logical,
+	}, nil
+}
+
 func protoToModel(p *pb.Transaction) *model.Transaction {
 	m := &model.Transaction{
 		TxId: p.TxId,
