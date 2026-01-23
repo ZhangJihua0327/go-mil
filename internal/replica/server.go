@@ -48,30 +48,28 @@ func (s *Server) DeliverTransaction(_ context.Context, req *pb.DeliverTransactio
 
 	tx := protoToModel(req.Tx)
 	log.Printf("[ReplicaServer] DeliverTransaction: txid=%s sts=%d cts=%d", tx.TxId, tx.Sts, tx.Cts)
+
+	// Update local HLC with transaction's commit timestamp to maintain causality
+	s.replica.hlc.Update(tx.Cts)
+
 	s.replica.Store.AddPendingTx(tx)
 
 	return &pb.DeliverTransactionResponse{Success: true}, nil
 }
 
 // HlcGet returns the current HLC timestamp
-func (s *Server) HlcGet(_ context.Context, _ *pb.GetHLCTimeRequest) (*pb.HLCTimestamp, error) {
+func (s *Server) HlcGet(_ context.Context, _ *pb.GetHLCTimeRequest) (*pb.HlcResponse, error) {
 	ts := s.replica.hlc.Now()
-	return &pb.HLCTimestamp{
-		WallTime: ts.WallTime,
-		Logical:  ts.Logical,
+	return &pb.HlcResponse{
+		Ts: ts,
 	}, nil
 }
 
 // HlcUpdate updates the local HLC with a remote timestamp
-func (s *Server) HlcUpdate(_ context.Context, req *pb.HLCTimestamp) (*pb.HLCTimestamp, error) {
-	remoteTs := HLCTimestamp{
-		WallTime: req.WallTime,
-		Logical:  req.Logical,
-	}
-	ts := s.replica.hlc.Update(remoteTs)
-	return &pb.HLCTimestamp{
-		WallTime: ts.WallTime,
-		Logical:  ts.Logical,
+func (s *Server) HlcUpdate(_ context.Context, req *pb.HlcResponse) (*pb.HlcResponse, error) {
+	ts := s.replica.hlc.Update(req.Ts)
+	return &pb.HlcResponse{
+		Ts: ts,
 	}, nil
 }
 

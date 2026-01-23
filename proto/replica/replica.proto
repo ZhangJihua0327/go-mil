@@ -16,8 +16,8 @@ service ReplicaService {
     rpc Abort(AbortRequest) returns (AbortResponse) {}
     
     // HLC operations
-    rpc HlcGet(GetHLCTimeRequest) returns (HLCTimestamp) {}
-    rpc HlcUpdate(HLCTimestamp) returns (HLCTimestamp) {}
+    rpc HlcGet(GetHLCTimeRequest) returns (HlcResponse) {}
+    rpc HlcUpdate(HlcResponse) returns (HlcResponse) {}
 }
 
 message GetTransactionRequest {
@@ -112,9 +112,8 @@ message AbortResponse {
     bool success = 1;
 }
 
-message HLCTimestamp {
-    int64 wall_time = 1;
-    int32 logical = 2;
+message HlcResponse {
+    uint64 ts = 1;
 }
 
 message GetHLCTimeRequest {}
