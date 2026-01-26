@@ -20,75 +20,123 @@ type headLock struct {
 	head *ValNode
 }
 
-// Store represents the Key-Value map with MVCC support
-type Store struct {
+// DataStore manages key-value data with MVCC support
+type DataStore struct {
 	mu   sync.RWMutex
 	data map[string]*headLock
+}
 
-	historyMu sync.RWMutex
-	history   []*model.Transaction
+// HistoryStore manages received and applied transactions
+type HistoryStore struct {
+	mu      sync.RWMutex
+	history []*model.Transaction
+	deps    *model.Deps
+}
 
-	deps *model.Deps
-
-	// pendingTxs is a cache for transactions received from other nodes but not yet applied
-	pendingMu  sync.Mutex
+// PendingStore manages transactions that have been received but not yet applied
+type PendingStore struct {
+	mu         sync.Mutex
 	pendingTxs map[uint64]*model.Transaction // key: cts
+}
+
+// Store represents the Key-Value map with MVCC support
+// It combines DataStore, HistoryStore, and PendingStore
+type Store struct {
+	data    *DataStore
+	history *HistoryStore
+	pending *PendingStore
+}
+
+// NewDataStore creates a new DataStore instance
+func NewDataStore() *DataStore {
+	return &DataStore{
+		data: make(map[string]*headLock),
+	}
+}
+
+// NewHistoryStore creates a new HistoryStore instance
+func NewHistoryStore() *HistoryStore {
+	return &HistoryStore{
+		history: make([]*model.Transaction, 0),
+		deps:    model.NewDeps(),
+	}
+}
+
+// NewPendingStore creates a new PendingStore instance
+func NewPendingStore() *PendingStore {
+	return &PendingStore{
+		pendingTxs: make(map[uint64]*model.Transaction),
+	}
 }
 
 // NewStore creates a new Store instance
 func NewStore() *Store {
 	return &Store{
-		data:       make(map[string]*headLock),
-		pendingTxs: make(map[uint64]*model.Transaction),
-		deps:       model.NewDeps(),
-		history:    make([]*model.Transaction, 0),
+		data:    NewDataStore(),
+		history: NewHistoryStore(),
+		pending: NewPendingStore(),
 	}
+}
+
+// Add adds a transaction to the pending cache
+func (ps *PendingStore) Add(tx *model.Transaction) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.pendingTxs[tx.Cts] = tx
+}
+
+// Get retrieves a transaction from the pending cache by cts
+func (ps *PendingStore) Get(cts uint64) *model.Transaction {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.pendingTxs[cts]
+}
+
+// Remove removes a transaction from the pending cache
+func (ps *PendingStore) Remove(cts uint64) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	delete(ps.pendingTxs, cts)
 }
 
 // AddPendingTx adds a transaction to the pending cache
 func (s *Store) AddPendingTx(tx *model.Transaction) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	s.pendingTxs[tx.Cts] = tx
+	s.pending.Add(tx)
 }
 
 // GetPendingTx retrieves a transaction from the pending cache by cts
 func (s *Store) GetPendingTx(cts uint64) *model.Transaction {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	return s.pendingTxs[cts]
+	return s.pending.Get(cts)
 }
 
 // RemovePendingTx removes a transaction from the pending cache
 func (s *Store) RemovePendingTx(cts uint64) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	delete(s.pendingTxs, cts)
+	s.pending.Remove(cts)
 }
 
 // getOrCreateLock returns the lock for a specific key, creating it if necessary
-func (s *Store) getOrCreateLock(key string) *headLock {
-	s.mu.RLock()
-	hl, exists := s.data[key]
-	s.mu.RUnlock()
+func (ds *DataStore) getOrCreateLock(key string) *headLock {
+	ds.mu.RLock()
+	hl, exists := ds.data[key]
+	ds.mu.RUnlock()
 	if exists {
 		return hl
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
 	// Double check
-	if hl, exists = s.data[key]; exists {
+	if hl, exists = ds.data[key]; exists {
 		return hl
 	}
 	hl = &headLock{}
-	s.data[key] = hl
+	ds.data[key] = hl
 	return hl
 }
 
 // Put inserts a new version ensuring the list is sorted by Cts descending
-func (s *Store) Put(key string, val int64, cts uint64) {
-	hl := s.getOrCreateLock(key)
+func (ds *DataStore) Put(key string, val int64, cts uint64) {
+	hl := ds.getOrCreateLock(key)
 
 	hl.mu.Lock()
 	defer hl.mu.Unlock()
@@ -117,17 +165,17 @@ func (s *Store) Put(key string, val int64, cts uint64) {
 }
 
 // BatchPut inserts multiple key-value pairs with the same commit timestamp
-func (s *Store) BatchPut(kvs map[string]int64, cts uint64) {
+func (ds *DataStore) BatchPut(kvs map[string]int64, cts uint64) {
 	for k, v := range kvs {
-		s.Put(k, v, cts)
+		ds.Put(k, v, cts)
 	}
 }
 
 // Get returns the version visible at sts for a key
-func (s *Store) Get(key string, sts uint64) *ValNode {
-	s.mu.RLock()
-	hl, exists := s.data[key]
-	s.mu.RUnlock()
+func (ds *DataStore) Get(key string, sts uint64) *ValNode {
+	ds.mu.RLock()
+	hl, exists := ds.data[key]
+	ds.mu.RUnlock()
 
 	if !exists {
 		return nil
@@ -147,11 +195,11 @@ func (s *Store) Get(key string, sts uint64) *ValNode {
 }
 
 // GC deletes all value nodes whose Cts <= ts, except head nodes.
-func (s *Store) GC(ts uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (ds *DataStore) GC(ts uint64) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
 
-	for _, hl := range s.data {
+	for _, hl := range ds.data {
 		hl.mu.Lock()
 		if hl.head != nil {
 			curr := hl.head
@@ -165,12 +213,16 @@ func (s *Store) GC(ts uint64) {
 		}
 		hl.mu.Unlock()
 	}
+}
 
-	// History GC
-	s.historyMu.Lock()
-	if len(s.history) > 0 {
+// GC removes transactions from history whose Cts <= ts, keeping at least the latest transaction
+func (hs *HistoryStore) GC(ts uint64) {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	if len(hs.history) > 0 {
 		// Find the index of the first transaction that has Cts > ts.
-		idx, found := slices.BinarySearchFunc(s.history, ts, func(t *model.Transaction, target uint64) int {
+		idx, found := slices.BinarySearchFunc(hs.history, ts, func(t *model.Transaction, target uint64) int {
 			return cmp.Compare(t.Cts, target)
 		})
 
@@ -180,64 +232,90 @@ func (s *Store) GC(ts uint64) {
 		}
 
 		// To mimic the original behavior of keeping at least the latest transaction:
-		if splitIdx == len(s.history) {
-			splitIdx = len(s.history) - 1
+		if splitIdx == len(hs.history) {
+			splitIdx = len(hs.history) - 1
 		}
 
 		if splitIdx > 0 {
-			s.history = s.history[splitIdx:]
+			hs.history = hs.history[splitIdx:]
 		}
 	}
-	s.historyMu.Unlock()
+}
+
+// AppendTx adds a transaction to the history and updates deps.
+func (hs *HistoryStore) AppendTx(tx *model.Transaction) {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	// Insert into history while maintaining ascending order by Cts
+	idx, _ := slices.BinarySearchFunc(hs.history, tx.Cts, func(t *model.Transaction, target uint64) int {
+		return cmp.Compare(t.Cts, target)
+	})
+	hs.history = slices.Insert(hs.history, idx, tx)
+
+	// Update deps
+	if hs.deps == nil {
+		hs.deps = model.NewDeps()
+	}
+	hs.deps.Add(tx.Cts)
+}
+
+// GetTx returns the transaction with the given cts
+func (hs *HistoryStore) GetTx(cts uint64) *model.Transaction {
+	hs.mu.RLock()
+	defer hs.mu.RUnlock()
+
+	received := hs.deps.IsReceived(cts)
+	if !received {
+		return nil
+	}
+
+	idx, found := slices.BinarySearchFunc(hs.history, cts, func(t *model.Transaction, target uint64) int {
+		return cmp.Compare(t.Cts, target)
+	})
+
+	if found {
+		return hs.history[idx]
+	}
+	return nil
+}
+
+// Put inserts a new version ensuring the list is sorted by Cts descending
+func (s *Store) Put(key string, val int64, cts uint64) {
+	s.data.Put(key, val, cts)
+}
+
+// BatchPut inserts multiple key-value pairs with the same commit timestamp
+func (s *Store) BatchPut(kvs map[string]int64, cts uint64) {
+	s.data.BatchPut(kvs, cts)
+}
+
+// Get returns the version visible at sts for a key
+func (s *Store) Get(key string, sts uint64) *ValNode {
+	return s.data.Get(key, sts)
+}
+
+// GC deletes all value nodes whose Cts <= ts, except head nodes.
+func (s *Store) GC(ts uint64) {
+	s.data.GC(ts)
+	s.history.GC(ts)
 }
 
 // AppendTx adds a transaction to the history and updates deps.
 func (s *Store) AppendTx(tx *model.Transaction) {
-	s.historyMu.Lock()
-	// Insert into history while maintaining ascending order by Cts
-	idx, _ := slices.BinarySearchFunc(s.history, tx.Cts, func(t *model.Transaction, target uint64) int {
-		return cmp.Compare(t.Cts, target)
-	})
-	s.history = slices.Insert(s.history, idx, tx)
-	s.historyMu.Unlock()
-
-	// Update deps
-	s.mu.Lock()
-	if s.deps == nil {
-		s.deps = model.NewDeps()
-	}
-	s.deps.Add(tx.Cts)
-	s.mu.Unlock()
+	s.history.AppendTx(tx)
 
 	cts := tx.Cts
 	for _, op := range tx.Operations {
 		// if op is write-op
 		// Type assertion on interface for Java-like instanceof/casting
 		if writeOp, ok := op.(*model.WriteOperation); ok {
-			s.Put(writeOp.Key, writeOp.Value, cts)
+			s.data.Put(writeOp.Key, writeOp.Value, cts)
 		}
 	}
 }
 
 // GetTx returns the transaction with the given cts
 func (s *Store) GetTx(cts uint64) *model.Transaction {
-	s.mu.RLock()
-	received := s.deps.IsReceived(cts)
-	s.mu.RUnlock()
-
-	if !received {
-		return nil
-	}
-
-	s.historyMu.RLock()
-	defer s.historyMu.RUnlock()
-
-	idx, found := slices.BinarySearchFunc(s.history, cts, func(t *model.Transaction, target uint64) int {
-		return cmp.Compare(t.Cts, target)
-	})
-
-	if found {
-		return s.history[idx]
-	}
-	return nil
+	return s.history.GetTx(cts)
 }
