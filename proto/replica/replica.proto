@@ -18,6 +18,10 @@ service ReplicaService {
     // HLC operations
     rpc HlcGet(GetHLCTimeRequest) returns (HlcResponse) {}
     rpc HlcUpdate(HlcResponse) returns (HlcResponse) {}
+    
+    // Runtime information operations
+    rpc GetRunTime(GetRunTimeRequest) returns (GetRunTimeResponse) {}
+    rpc GetAllRunTime(GetAllRunTimeRequest) returns (GetAllRunTimeResponse) {}
 }
 
 message GetTransactionRequest {
@@ -117,3 +121,27 @@ message HlcResponse {
 }
 
 message GetHLCTimeRequest {}
+
+message GetRunTimeRequest {
+    string tx_id = 1;
+}
+
+message GetRunTimeResponse {
+    bool found = 1;
+    TxnRunTimeInfo runtime = 2;
+}
+
+message GetAllRunTimeRequest {}
+
+message GetAllRunTimeResponse {
+    repeated TxnRunTimeInfo runtimes = 1;
+}
+
+message TxnRunTimeInfo {
+    string tx_id = 1;
+    Transaction tx = 2;
+    map<string, int64> buffer = 3;
+    map<string, uint64> read_set = 4;
+    uint64 dep = 5;
+    bool active = 6;
+}

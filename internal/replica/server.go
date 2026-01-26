@@ -73,6 +73,45 @@ func (s *Server) HlcUpdate(_ context.Context, req *pb.HlcResponse) (*pb.HlcRespo
 	}, nil
 }
 
+// GetRunTime returns runtime information for a specific transaction
+func (s *Server) GetRunTime(_ context.Context, req *pb.GetRunTimeRequest) (*pb.GetRunTimeResponse, error) {
+	info := s.replica.Store.GetRunTime(req.TxId)
+	if info == nil {
+		return &pb.GetRunTimeResponse{Found: false}, nil
+	}
+
+	return &pb.GetRunTimeResponse{
+		Found:   true,
+		Runtime: runtimeToProto(info),
+	}, nil
+}
+
+// GetAllRunTime returns runtime information for all active transactions
+func (s *Server) GetAllRunTime(_ context.Context, _ *pb.GetAllRunTimeRequest) (*pb.GetAllRunTimeResponse, error) {
+	allRuntime := s.replica.Store.GetAllRunTime()
+	runtimes := make([]*pb.TxnRunTimeInfo, 0, len(allRuntime))
+
+	for _, info := range allRuntime {
+		runtimes = append(runtimes, runtimeToProto(info))
+	}
+
+	return &pb.GetAllRunTimeResponse{
+		Runtimes: runtimes,
+	}, nil
+}
+
+// runtimeToProto converts internal RunTimeStore to protobuf format
+func runtimeToProto(info *RunTimeStore) *pb.TxnRunTimeInfo {
+	return &pb.TxnRunTimeInfo{
+		TxId:    info.TxId,
+		Tx:      modelToProto(info.Tx),
+		Buffer:  info.Buffer,
+		ReadSet: info.ReadSet,
+		Dep:     info.Dep,
+		Active:  info.Active,
+	}
+}
+
 func protoToModel(p *pb.Transaction) *model.Transaction {
 	m := &model.Transaction{
 		TxId: p.TxId,

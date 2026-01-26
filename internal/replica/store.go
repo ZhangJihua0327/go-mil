@@ -39,12 +39,24 @@ type PendingStore struct {
 	pendingTxs map[uint64]*model.Transaction // key: cts
 }
 
+// RunTimeStore manages runtime information for the active transaction (unique)
+type RunTimeStore struct {
+	mu      sync.RWMutex
+	TxId    string
+	Tx      *model.Transaction
+	Buffer  map[string]int64  // Write buffer
+	ReadSet map[string]uint64 // Track read versions for validation
+	Dep     uint64            // Client-side dependency tracker
+	Active  bool              // Transaction active state
+}
+
 // Store represents the Key-Value map with MVCC support
 // It combines DataStore, HistoryStore, and PendingStore
 type Store struct {
 	data    *DataStore
 	history *HistoryStore
 	pending *PendingStore
+	runtime *RunTimeStore
 }
 
 // NewDataStore creates a new DataStore instance
@@ -69,12 +81,18 @@ func NewPendingStore() *PendingStore {
 	}
 }
 
+// NewRunTimeStore creates a new RunTimeStore instance
+func NewRunTimeStore() *RunTimeStore {
+	return &RunTimeStore{}
+}
+
 // NewStore creates a new Store instance
 func NewStore() *Store {
 	return &Store{
 		data:    NewDataStore(),
 		history: NewHistoryStore(),
 		pending: NewPendingStore(),
+		runtime: NewRunTimeStore(),
 	}
 }
 
@@ -318,4 +336,86 @@ func (s *Store) AppendTx(tx *model.Transaction) {
 // GetTx returns the transaction with the given cts
 func (s *Store) GetTx(cts uint64) *model.Transaction {
 	return s.history.GetTx(cts)
+}
+
+// CreateRunTime creates a new runtime info for a transaction
+func (rs *RunTimeStore) Create(txId string, tx *model.Transaction) *RunTimeStore {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	rs.TxId = txId
+	rs.Tx = tx
+	rs.Buffer = make(map[string]int64)
+	rs.ReadSet = make(map[string]uint64)
+	rs.Active = true
+	return rs
+}
+
+// Get retrieves runtime info for a transaction
+func (rs *RunTimeStore) Get(txId string) *RunTimeStore {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	if rs.TxId == txId && rs.Active {
+		return rs
+	}
+	return nil
+}
+
+// Update updates runtime info for a transaction
+func (rs *RunTimeStore) Update(txId string, updateFn func(*RunTimeStore)) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	if rs.TxId == txId && rs.Active {
+		updateFn(rs)
+	}
+}
+
+// Delete removes runtime info for a transaction
+func (rs *RunTimeStore) Delete(txId string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.TxId == txId {
+		rs.Active = false
+		rs.TxId = ""
+		rs.Tx = nil
+		rs.Buffer = nil
+		rs.ReadSet = nil
+	}
+}
+
+// GetAll returns active transaction runtime info (at most one)
+func (rs *RunTimeStore) GetAll() []*RunTimeStore {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+
+	if rs.Active {
+		return []*RunTimeStore{rs}
+	}
+	return nil
+}
+
+// CreateRunTime creates a new runtime info for a transaction
+func (s *Store) CreateRunTime(txId string, tx *model.Transaction) *RunTimeStore {
+	return s.runtime.Create(txId, tx)
+}
+
+// GetRunTime retrieves runtime info for a transaction
+func (s *Store) GetRunTime(txId string) *RunTimeStore {
+	return s.runtime.Get(txId)
+}
+
+// UpdateRunTime updates runtime info for a transaction
+func (s *Store) UpdateRunTime(txId string, updateFn func(*RunTimeStore)) {
+	s.runtime.Update(txId, updateFn)
+}
+
+// DeleteRunTime removes runtime info for a transaction
+func (s *Store) DeleteRunTime(txId string) {
+	s.runtime.Delete(txId)
+}
+
+// GetAllRunTime returns all active transaction runtime info
+func (s *Store) GetAllRunTime() []*RunTimeStore {
+	return s.runtime.GetAll()
 }

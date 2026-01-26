@@ -151,7 +151,7 @@ func (r *Replica) Close() {
 
 // EnsureCausal ensures that the transaction with the given cts and all its dependencies are received.
 func (r *Replica) EnsureCausal(ts uint64) error {
-	tx := r.Store.pendingTxs[ts]
+	tx := r.Store.GetPendingTx(ts)
 	if tx == nil {
 		// Try to fetch from peers
 		tx = r.fetchTxFromPeers(ts)
@@ -162,7 +162,7 @@ func (r *Replica) EnsureCausal(ts uint64) error {
 		r.Store.RemovePendingTx(ts)
 	}
 	// Ensure dependencies
-	if tx.Deps.MinDep > r.Store.deps.MinDep {
+	if tx.Deps.MinDep > r.Store.history.deps.MinDep {
 		err := r.EnsureTotal(tx.Deps.MinDep)
 		if err != nil {
 			return err
@@ -180,11 +180,11 @@ func (r *Replica) EnsureCausal(ts uint64) error {
 
 // EnsureTotal ensures all transactions with cts <= ts are received.
 func (r *Replica) EnsureTotal(ts uint64) error {
-	for cts := uint64(r.Store.deps.MinDep); cts <= ts; cts++ {
-		if r.Store.deps.IsReceived(cts) {
+	for cts := uint64(r.Store.history.deps.MinDep); cts <= ts; cts++ {
+		if r.Store.history.deps.IsReceived(cts) {
 			continue
 		}
-		tx := r.Store.pendingTxs[cts]
+		tx := r.Store.GetPendingTx(cts)
 		if tx == nil {
 			// Try to fetch from peers
 			tx = r.fetchTxFromPeers(cts)

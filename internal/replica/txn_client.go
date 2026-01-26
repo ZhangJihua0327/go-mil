@@ -23,16 +23,12 @@ type TxnClient interface {
 type CentralizedClient struct {
 	replica *Replica
 	txId    string
-	tx      model.Transaction
-	buffer  map[string]int64
-	active  bool
 	mu      sync.Mutex
 }
 
 func NewCentralizedClient(r *Replica) *CentralizedClient {
 	return &CentralizedClient{
 		replica: r,
-		buffer:  make(map[string]int64),
 	}
 }
 
@@ -40,36 +36,50 @@ func (c *CentralizedClient) Start(ctx context.Context, isolationLevel string) (s
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.active {
-		return "", 0, fmt.Errorf("transaction already active")
+	if c.txId != "" {
+		if info := c.replica.Store.GetRunTime(c.txId); info != nil && info.Active {
+			return "", 0, fmt.Errorf("transaction already active")
+		}
 	}
+
 	isoLevel := model.ParseIsolationLevel(isolationLevel)
 	var sts uint64
 	if isoLevel == model.CC || isoLevel == model.SER {
 		sts, _ = c.replica.Tick(ctx)
 	} else {
-		sts = c.replica.Store.deps.MaxDeps()
+		sts = c.replica.Store.history.deps.MaxDeps()
 	}
-	c.tx = model.Transaction{
+
+	tx := &model.Transaction{
 		TxId:           fmt.Sprintf("tx-%d-%s", sts, c.replica.ID),
 		Sts:            sts,
-		Deps:           c.replica.Store.deps.Clone(),
+		Deps:           c.replica.Store.history.deps.Clone(),
 		IsolationLevel: isoLevel,
 	}
-	c.buffer = make(map[string]int64)
+	c.txId = tx.TxId
+
+	// Create runtime info in store
+	c.replica.Store.CreateRunTime(c.txId, tx)
+
 	if isoLevel == model.CC {
 		err := c.replica.EnsureCausal(sts)
 		if err != nil {
+			c.replica.Store.DeleteRunTime(c.txId)
 			return "", 0, err
 		}
 	} else if isoLevel == model.PC || isoLevel == model.SI || isoLevel == model.SER {
 		err := c.replica.EnsureTotal(sts)
 		if err != nil {
+			c.replica.Store.DeleteRunTime(c.txId)
 			return "", 0, err
 		}
 	}
-	c.active = true
-	c.tx.AddOperation(&model.StartOperation{})
+
+	// Add start operation
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Tx.AddOperation(&model.StartOperation{})
+	})
+
 	return c.txId, sts, nil
 }
 
@@ -77,25 +87,27 @@ func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return 0, false, fmt.Errorf("no active transaction")
 	}
 
 	var val int64
 	var succeed bool
-	if c.tx.IsolationLevel == model.SER {
-		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+	if info.Tx.IsolationLevel == model.SER {
+		err := c.replica.AcquireLock(ctx, key, c.txId)
 		if err != nil {
 			return 0, false, err
 		}
 	}
+
 	// 1. Read from buffer first
-	if value, exists := c.buffer[key]; exists {
+	if value, exists := info.Buffer[key]; exists {
 		val = value
 		succeed = true
 	} else {
 		// 2. Read from snapshot (Store)
-		node := c.replica.Store.Get(key, c.tx.Sts)
+		node := c.replica.Store.Get(key, info.Tx.Sts)
 
 		if node != nil {
 			val = node.Value
@@ -105,9 +117,13 @@ func (c *CentralizedClient) Read(ctx context.Context, key string) (int64, bool, 
 			succeed = false
 		}
 	}
-	c.tx.AddOperation(&model.ReadOperation{
-		Key:        key,
-		ReadResult: val,
+
+	// Add operation
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Tx.AddOperation(&model.ReadOperation{
+			Key:        key,
+			ReadResult: val,
+		})
 	})
 
 	return val, succeed, nil
@@ -117,21 +133,26 @@ func (c *CentralizedClient) Write(ctx context.Context, key string, value int64) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return fmt.Errorf("no active transaction")
 	}
-	isoLevel := c.tx.IsolationLevel
+
+	isoLevel := info.Tx.IsolationLevel
 	if isoLevel == model.SER || isoLevel == model.CC {
-		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+		err := c.replica.AcquireLock(ctx, key, c.txId)
 		if err != nil {
 			return err
 		}
 	}
-	// Write to buffer
-	c.buffer[key] = value
-	c.tx.AddOperation(&model.WriteOperation{
-		Key:   key,
-		Value: value,
+
+	// Update runtime info
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Buffer[key] = value
+		info.Tx.AddOperation(&model.WriteOperation{
+			Key:   key,
+			Value: value,
+		})
 	})
 
 	return nil
@@ -141,7 +162,8 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return 0, fmt.Errorf("no active transaction")
 	}
 
@@ -150,23 +172,26 @@ func (c *CentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to get commit timestamp: %v", err)
 	}
-	c.tx.Cts = cts
-	isoLevel := c.tx.IsolationLevel
+	info.Tx.Cts = cts
+	isoLevel := info.Tx.IsolationLevel
 
 	// 2. Atomic write to Store
-	c.replica.Store.BatchPut(c.buffer, cts)
+	c.replica.Store.BatchPut(info.Buffer, cts)
 	// 3. add to history
-	c.replica.Store.AppendTx(&c.tx)
-	c.replica.SendTxToPeers(&c.tx)
+	c.replica.Store.AppendTx(info.Tx)
+	c.replica.SendTxToPeers(info.Tx)
+
 	if isoLevel == model.SER || isoLevel == model.CC {
-		err := c.replica.ReleaseLocksByOwner(ctx, c.tx.TxId)
+		err := c.replica.ReleaseLocksByOwner(ctx, c.txId)
 		if err != nil {
 			return 0, err
 		}
 	}
-	c.active = false
-	c.tx = model.Transaction{}
-	c.buffer = nil
+
+	// Clean up runtime info
+	c.replica.Store.DeleteRunTime(c.txId)
+	c.txId = ""
+
 	return cts, nil
 }
 
@@ -174,12 +199,15 @@ func (c *CentralizedClient) Abort(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return fmt.Errorf("no active transaction")
 	}
-	c.active = false
-	c.tx = model.Transaction{}
-	c.buffer = nil
+
+	// Clean up runtime info
+	c.replica.Store.DeleteRunTime(c.txId)
+	c.txId = ""
+
 	return nil
 }
 
@@ -187,19 +215,12 @@ func (c *CentralizedClient) Abort(ctx context.Context) error {
 type DecentralizedClient struct {
 	replica *Replica
 	txId    string
-	tx      model.Transaction
-	buffer  map[string]int64
-	readSet map[string]uint64 // Track read versions for SER validation (Phase 2.4)
-	dep     uint64            // Client-side dependency tracker (Axiom Int/TransVis)
-	active  bool
 	mu      sync.Mutex
 }
 
 func NewDecentralizedClient(r *Replica) *DecentralizedClient {
 	return &DecentralizedClient{
 		replica: r,
-		buffer:  make(map[string]int64),
-		readSet: make(map[string]uint64),
 	}
 }
 
@@ -207,8 +228,10 @@ func (c *DecentralizedClient) Start(ctx context.Context, isolationLevel string) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.active {
-		return "", 0, fmt.Errorf("transaction already active")
+	if c.txId != "" {
+		if info := c.replica.Store.GetRunTime(c.txId); info != nil && info.Active {
+			return "", 0, fmt.Errorf("transaction already active")
+		}
 	}
 
 	isoLevel := model.ParseIsolationLevel(isolationLevel)
@@ -219,20 +242,28 @@ func (c *DecentralizedClient) Start(ctx context.Context, isolationLevel string) 
 	// If level is RA, CC, or PSI: Set sts = clientDep (causal visibility optimization)
 	// If level is PC, SI, or SER: Use local HLC Now() to ensure prefix/total delivery without TSO
 	if isoLevel == model.RA || isoLevel == model.CC || isoLevel == model.PSI {
-		sts = c.dep
+		// Use dep from previous transaction if exists
+		sts = 0
+		if c.txId != "" {
+			if prevInfo := c.replica.Store.GetRunTime(c.txId); prevInfo != nil {
+				sts = prevInfo.Dep
+			}
+		}
 	} else {
 		sts = c.replica.hlc.Now()
 	}
 
-	c.tx = model.Transaction{
+	tx := &model.Transaction{
 		TxId:           fmt.Sprintf("tx-dec-%d-%s", sts, c.replica.ID),
 		Sts:            sts,
-		Deps:           c.replica.Store.deps.Clone(),
+		Deps:           c.replica.Store.history.deps.Clone(),
 		IsolationLevel: isoLevel,
 	}
-	c.txId = c.tx.TxId
-	c.buffer = make(map[string]int64)
-	c.readSet = make(map[string]uint64)
+	c.txId = tx.TxId
+
+	// Create runtime info in store
+	info := c.replica.Store.CreateRunTime(c.txId, tx)
+	info.Dep = sts
 
 	// Visibility Logic
 	if isoLevel == model.CC || isoLevel == model.PSI {
@@ -241,11 +272,15 @@ func (c *DecentralizedClient) Start(ctx context.Context, isolationLevel string) 
 		err = c.replica.EnsureTotal(sts)
 	}
 	if err != nil {
+		c.replica.Store.DeleteRunTime(c.txId)
 		return "", 0, err
 	}
 
-	c.active = true
-	c.tx.AddOperation(&model.StartOperation{})
+	// Add start operation
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Tx.AddOperation(&model.StartOperation{})
+	})
+
 	return c.txId, sts, nil
 }
 
@@ -253,38 +288,45 @@ func (c *DecentralizedClient) Read(ctx context.Context, key string) (int64, bool
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return 0, false, fmt.Errorf("no active transaction")
 	}
 
 	// Phase 2.2: SER lock acquisition
-	if c.tx.IsolationLevel == model.SER {
-		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+	if info.Tx.IsolationLevel == model.SER {
+		err := c.replica.AcquireLock(ctx, key, c.txId)
 		if err != nil {
 			return 0, false, err
 		}
 	}
 
 	// 1. Read from local buffer
-	if val, exists := c.buffer[key]; exists {
+	if val, exists := info.Buffer[key]; exists {
 		return val, true, nil
 	}
 
 	// 2. Read from Shard (MVCC version selection)
-	node := c.replica.Store.Get(key, c.tx.Sts)
+	node := c.replica.Store.Get(key, info.Tx.Sts)
 	var val int64
 	var found bool
 	if node != nil {
 		val = node.Value
 		found = true
 		// Phase 3: Update local HLC and client dependency (Axiom Int)
-		c.dep = c.replica.hlc.Update(node.Cts)
-		c.readSet[key] = node.Cts
+		newDep := c.replica.hlc.Update(node.Cts)
+		c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+			info.Dep = newDep
+			info.ReadSet[key] = node.Cts
+		})
 	}
 
-	c.tx.AddOperation(&model.ReadOperation{
-		Key:        key,
-		ReadResult: val,
+	// Add operation
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Tx.AddOperation(&model.ReadOperation{
+			Key:        key,
+			ReadResult: val,
+		})
 	})
 
 	return val, found, nil
@@ -294,22 +336,26 @@ func (c *DecentralizedClient) Write(ctx context.Context, key string, value int64
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return fmt.Errorf("no active transaction")
 	}
 
 	// Phase 2.3: SER/CC lock acquisition (Wait-for-Commit)
-	if c.tx.IsolationLevel == model.SER || c.tx.IsolationLevel == model.CC {
-		err := c.replica.AcquireLock(ctx, key, c.tx.TxId)
+	if info.Tx.IsolationLevel == model.SER || info.Tx.IsolationLevel == model.CC {
+		err := c.replica.AcquireLock(ctx, key, c.txId)
 		if err != nil {
 			return err
 		}
 	}
 
-	c.buffer[key] = value
-	c.tx.AddOperation(&model.WriteOperation{
-		Key:   key,
-		Value: value,
+	// Update runtime info
+	c.replica.Store.UpdateRunTime(c.txId, func(info *RunTimeStore) {
+		info.Buffer[key] = value
+		info.Tx.AddOperation(&model.WriteOperation{
+			Key:   key,
+			Value: value,
+		})
 	})
 
 	return nil
@@ -319,31 +365,31 @@ func (c *DecentralizedClient) Commit(ctx context.Context) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return 0, fmt.Errorf("no active transaction")
 	}
 
 	// Phase 2.5: The COMMIT Finalization (Using local HLC)
 	cts := c.replica.hlc.Now()
 
-	c.tx.Cts = cts
+	info.Tx.Cts = cts
 	// Phase 3: Update client dependency (Axiom TransVis)
-	c.dep = cts
+	info.Dep = cts
 
 	// Atomic write to Store
-	c.replica.Store.BatchPut(c.buffer, cts)
-	c.replica.Store.AppendTx(&c.tx)
-	c.replica.SendTxToPeers(&c.tx)
+	c.replica.Store.BatchPut(info.Buffer, cts)
+	c.replica.Store.AppendTx(info.Tx)
+	c.replica.SendTxToPeers(info.Tx)
 
 	// Release locks
-	if c.tx.IsolationLevel == model.SER || c.tx.IsolationLevel == model.CC {
-		_ = c.replica.ReleaseLocksByOwner(ctx, c.tx.TxId)
+	if info.Tx.IsolationLevel == model.SER || info.Tx.IsolationLevel == model.CC {
+		_ = c.replica.ReleaseLocksByOwner(ctx, c.txId)
 	}
 
-	c.active = false
-	c.tx = model.Transaction{}
-	c.buffer = nil
-	c.readSet = nil
+	// Clean up runtime info
+	c.replica.Store.DeleteRunTime(c.txId)
+	c.txId = ""
 
 	return cts, nil
 }
@@ -352,18 +398,19 @@ func (c *DecentralizedClient) Abort(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.active {
+	info := c.replica.Store.GetRunTime(c.txId)
+	if info == nil || !info.Active {
 		return fmt.Errorf("no active transaction")
 	}
 
 	// Release locks if held
-	if c.tx.IsolationLevel == model.SER || c.tx.IsolationLevel == model.CC {
-		_ = c.replica.ReleaseLocksByOwner(ctx, c.tx.TxId)
+	if info.Tx.IsolationLevel == model.SER || info.Tx.IsolationLevel == model.CC {
+		_ = c.replica.ReleaseLocksByOwner(ctx, c.txId)
 	}
 
-	c.active = false
-	c.tx = model.Transaction{}
-	c.buffer = nil
-	c.readSet = nil
+	// Clean up runtime info
+	c.replica.Store.DeleteRunTime(c.txId)
+	c.txId = ""
+
 	return nil
 }
