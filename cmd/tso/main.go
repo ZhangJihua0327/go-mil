@@ -21,7 +21,7 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterTSOServer(s, tso.NewTsoServer())
+	pb.RegisterTSOServer(s, tso.NewTsoServer(cfg))
 
 	fmt.Printf("TSO Server starting on :%s...\n", port)
 	if err := s.Serve(lis); err != nil {

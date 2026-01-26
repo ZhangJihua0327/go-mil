@@ -2,6 +2,7 @@ package tso
 
 import (
 	"context"
+	"go-mil/internal/config"
 	pb "go-mil/proto/tso"
 	"log"
 	"sync"
@@ -19,16 +20,19 @@ type lockEntry struct {
 type Server struct {
 	pb.UnimplementedTSOServer
 	current int64
+	config  *config.TSOConfig
 
 	mu    sync.Mutex
 	locks map[string]lockEntry
 }
 
 // NewTsoServer NewTSO creates a new Timestamp Oracle
-// Initializes counter to 0
-func NewTsoServer() *Server {
+// Initializes counter to 0 and loads configuration
+func NewTsoServer(cfg *config.TSOConfig) *Server {
+	log.Printf("[TSO] Initializing TSO Server with config: Port=%s", cfg.Port)
 	return &Server{
 		current: 0,
+		config:  cfg,
 		locks:   make(map[string]lockEntry),
 	}
 }
