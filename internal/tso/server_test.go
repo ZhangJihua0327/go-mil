@@ -2,12 +2,14 @@ package tso
 
 import (
 	"context"
+	"go-mil/internal/config"
 	pb "go-mil/proto/tso"
 	"testing"
 )
 
 func TestTickTock(t *testing.T) {
-	s := NewTsoServer()
+	cfg := &config.TSOConfig{Central: true}
+	s := NewTsoServer(cfg)
 	ctx := context.Background()
 
 	// Initial tick should be 0
@@ -50,7 +52,8 @@ func TestTickTock(t *testing.T) {
 }
 
 func TestConcurrentTock(t *testing.T) {
-	s := NewTsoServer()
+	cfg := &config.TSOConfig{Central: true}
+	s := NewTsoServer(cfg)
 	ctx := context.Background()
 	n := 1000
 	done := make(chan bool)
@@ -79,7 +82,8 @@ func TestConcurrentTock(t *testing.T) {
 }
 
 func TestReleaseAllLocks(t *testing.T) {
-	s := NewTsoServer()
+	cfg := &config.TSOConfig{Central: true}
+	s := NewTsoServer(cfg)
 	ctx := context.Background()
 
 	owner1 := "tx1_replica1"
