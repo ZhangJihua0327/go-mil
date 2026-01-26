@@ -22,7 +22,8 @@ type Peer struct {
 
 // TSOConfig holds the configuration for TSO nodes.
 type TSOConfig struct {
-	Port string
+	Port    string
+	Central bool
 }
 
 // ReplicaConfig holds the configuration for Replica nodes.
@@ -46,7 +47,8 @@ func GetNodeType() NodeType {
 // LoadTSOConfig loads TSO configuration from environment variables.
 func LoadTSOConfig() *TSOConfig {
 	return &TSOConfig{
-		Port: getEnv("PORT", "50051"),
+		Port:    getEnv("PORT", "50051"),
+		Central: getEnv("CENTRAL_MODE", "false") == "true",
 	}
 }
 

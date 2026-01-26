@@ -38,12 +38,20 @@ func NewTsoServer(cfg *config.TSOConfig) *Server {
 }
 
 func (s *Server) Tick(ctx context.Context, _ *pb.TickRequest) (*pb.TickResponse, error) {
+	if !s.config.Central {
+		log.Printf("[TSO] Tick: Central mode disabled, returning nil")
+		return nil, nil
+	}
 	val := atomic.LoadInt64(&s.current)
 	log.Printf("[TSO] Tick: current=%d", val)
 	return &pb.TickResponse{Timestamp: val}, nil
 }
 
 func (s *Server) Tock(ctx context.Context, _ *pb.TockRequest) (*pb.TockResponse, error) {
+	if !s.config.Central {
+		log.Printf("[TSO] Tick: Central mode disabled, returning nil")
+		return nil, nil
+	}
 	val := atomic.AddInt64(&s.current, 1)
 	log.Printf("[TSO] Tock: new=%d", val)
 	return &pb.TockResponse{Timestamp: val}, nil
