@@ -27,7 +27,7 @@ type Replica struct {
 	// gRPC clients and connections
 	tsoClient   tso.TSOClient
 	peerClients map[string]pb.ReplicaServiceClient
-	conns       []*grpc.ClientConn
+	clients     []*grpc.ClientConn
 
 	hlc *HLC
 }
@@ -47,7 +47,7 @@ func NewReplica(cfg *config.ReplicaConfig) (*Replica, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to TSO at %s: %v", cfg.TSOAddr, err)
 		}
-		r.conns = append(r.conns, conn)
+		r.clients = append(r.clients, conn)
 		r.tsoClient = tso.NewTSOClient(conn)
 	}
 
@@ -58,7 +58,7 @@ func NewReplica(cfg *config.ReplicaConfig) (*Replica, error) {
 			r.Close() // Clean up already opened connections
 			return nil, fmt.Errorf("failed to connect to peer %s at %s: %v", peer.ID, peer.Addr, err)
 		}
-		r.conns = append(r.conns, conn)
+		r.clients = append(r.clients, conn)
 		r.peerClients[peer.ID] = pb.NewReplicaServiceClient(conn)
 	}
 
@@ -144,7 +144,7 @@ func (r *Replica) ReleaseLocksByOwner(ctx context.Context, owner string) error {
 
 // Close closes all persistent connections
 func (r *Replica) Close() {
-	for _, conn := range r.conns {
+	for _, conn := range r.clients {
 		_ = conn.Close()
 	}
 }
